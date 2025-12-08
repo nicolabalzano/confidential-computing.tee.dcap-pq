@@ -2,17 +2,15 @@ Intel(R) Software Guard Extensions Data Center Attestation Primitives (Intel(R) 
 ================================================
 # Linux
 ## Supported operating systems:
-* Ubuntu\* 18.04 LTS Desktop 64bits
-* Ubuntu\* 18.04 LTS Server 64bits
-* Ubuntu\* 20.04 LTS Desktop 64bits
-* Ubuntu\* 20.04 LTS Server 64bits
-* Ubuntu\* 22.04 LTS Server 64bits
-* Red Hat Enterprise Linux Server release 8.6 64bits
-* CentOS Stream 8 64bits
-* CentOS 8.3 64bits
-* SUSE Linux Enterprise Server 15.4 64bits
-* Anolis OS 8.6 64bits
+* Ubuntu* 22.04 LTS Server 64bits
+* Ubuntu* 24.04 LTS Server 64bits
+* Red Hat Enterprise Linux Server release 9.4 64bits
+* CentOS Stream 9 64bits
+* SUSE Linux Enterprise Server 15.6 64bits
+* Anolis OS 8.10 64bits
+* Azure Linux 3.0 64bits
 * Debian 10 64bits
+* Debian 12 64bits
 ## Requirements:
 * make
 * gcc

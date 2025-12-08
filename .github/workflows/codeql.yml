@@ -2,23 +2,43 @@ name: "CodeQL"
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main*" ]
+    paths:
+      - '**'
+      - '!**.txt'
+      - '!**.md'
+      - '!.github/**'
+      - '.github/workflows/codeql.yml'
+      - '.github/codeql/**'
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main*" ]
+    paths:
+      - '**'
+      - '!**.txt'
+      - '!**.md'
+      - '!.github/**'
+      - '.github/workflows/codeql.yml'
+      - '.github/codeql/**'
   schedule:
     - cron: '35 2 * * 0'
 
 # Declare default permissions as read only.
 permissions: read-all
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-    runs-on: ubuntu-22.04
+    runs-on: ${{ vars.RUNNER_CODE_QL || 'ubuntu-22.04' }}  # The runner type (if overridden by the var) must be an Ubuntu flavor for the C++ build to work.
     timeout-minutes: ${{ (matrix.language == 'swift' && 120) || 360 }}
     permissions:
-      # required for all workflows
-      security-events: write
+      security-events: write  # For uploading SARIF results to code scanning API
+      actions: read   # For telemetry/status reporting
+      contents: read
+      pull-requests: read
 
     strategy:
       fail-fast: false
@@ -27,16 +47,17 @@ jobs:
         - language: c-cpp
           build-mode: manual
           sarif-name: cpp
-        # CodeQL supports the following values keywords for 'language': 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'swift'
+        # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'rust', 'swift'
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         submodules: recursive
+        token: ${{ secrets.ALL_REPO_CONTENTS_READ_PAT || github.token }}
 
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
+      uses: github/codeql-action/init@v4
       with:
         languages: ${{ matrix.language }}
         build-mode: ${{ matrix.build-mode }}
@@ -52,22 +73,48 @@ jobs:
     # ℹ️ Command-line programs to run using the OS shell.
     # 📚 See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsrun
     - name: Build
-      if: matrix.build-mode == 'manual'
+      if: matrix.build-mode == 'manual' && matrix.language == 'c-cpp'
+      shell: bash
       run: |
-        sudo apt-get update
-        sudo apt-get install libcurl4-openssl-dev libboost-dev libboost-system-dev libboost-thread-dev
+        if ! command -v lsb_release &> /dev/null || ! (lsb_release -is 2>/dev/null | grep -Eiq 'Ubuntu'); then
+          echo "ERROR: This workflow requires an Ubuntu runner"
+          exit 1
+        fi
+        echo "Runner OS is: $(lsb_release -is) $(lsb_release -rs)"
+
+        set -xeuo pipefail
+
+        sudo -E apt-get update
+        sudo -E apt-get install -y --no-install-recommends \
+          libcurl4-openssl-dev \
+          libboost-dev \
+          libboost-system-dev \
+          libboost-thread-dev \
+          wget \
+          build-essential \
+          cmake \
+          python-is-python3 \
+          fakeroot \
+          debhelper \
+          rpm \
+          libssl-dev
+
         QuoteGeneration/download_prebuilt.sh
         wget -r -l1 -np -nd --accept 'sgx_linux_x64_sdk_*.bin' https://download.01.org/intel-sgx/latest/linux-latest/distro/ubuntu22.04-server/
         chmod +x ./sgx_linux_x64_sdk_*.bin
         ./sgx_linux_x64_sdk_*.bin <<< "yes"
+
+        set +u # prevent 'unbound variable' if sgxsdk/environment uses unset variables
+        set +x
+        echo "Sourcing SGX SDK environment and building..."
         source ./sgxsdk/environment; make all
 
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
+      uses: github/codeql-action/analyze@v4
       with:
         category: "/language:${{matrix.language}}"
         output: sarif-results
-        upload: failure-only
+        upload: ${{ vars.DO_NOT_UPLOAD_SARIF_TO_GITHUB == '1' && 'never' || 'failure-only' }}
 
     - name: Filter SARIF
       uses: advanced-security/filter-sarif@v1
@@ -80,8 +127,44 @@ jobs:
         input: sarif-results/${{ matrix.sarif-name }}.sarif
         output: sarif-results/${{ matrix.sarif-name }}.sarif
 
-    - name: Upload SARIF
-      uses: github/codeql-action/upload-sarif@v3
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v5
+      if: ${{ vars.PUBLISH_STANDALONE_SARIF_RESULTS == '1' }}
+      with:
+        name: codeQL_sarif_results_${{ matrix.language }}
+        path: sarif-results/**
+        retention-days: 1
+
+    - name: Upload SARIF to GitHub Code Scanning
+      if: ${{ vars.DO_NOT_UPLOAD_SARIF_TO_GITHUB != '1' }}
+      uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: sarif-results/${{ matrix.sarif-name }}.sarif
 
+  aggregate_results:
+    name: Publish results as standalone artifact
+    runs-on: ${{ vars.RUNNER_CODE_QL || 'ubuntu-22.04' }}
+    needs: analyze
+    if: always() && vars.PUBLISH_STANDALONE_SARIF_RESULTS == '1'
+
+    steps:
+      - name: Collect all results
+        uses: actions/download-artifact@v4
+        with:
+          path: combined-artifacts
+          merge-multiple: true
+
+      - name: Generate a local HTML report
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+         set -xeuo pipefail
+         sudo -E apt-get update && sudo -E apt-get install -y --no-install-recommends python3-pip
+         pip3 install sarif-tools
+         ~/.local/bin/sarif html combined-artifacts/*.sarif --output combined-artifacts/codeQL_report.html
+
+      - name: Upload combined results for offline viewing
+        uses: actions/upload-artifact@v5
+        with:
+          name: codeQL-results
+          path: combined-artifacts

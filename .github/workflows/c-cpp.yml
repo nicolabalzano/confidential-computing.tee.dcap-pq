@@ -2,9 +2,9 @@ name: C/C++ CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main*" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main*" ]
 
 permissions:
   actions: read
@@ -13,26 +13,50 @@ permissions:
   issues: write
   pull-requests: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
 
-    runs-on: ubuntu-22.04
+    runs-on: ${{ vars.RUNNER_CI_BUILD || 'ubuntu-22.04' }}
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        token: ${{ secrets.ALL_REPO_CONTENTS_READ_PAT || github.token }}
+
     - name: install dependencies
+      shell: bash
       run: |
-        sudo apt-get update
-        sudo apt-get install libcurl4-openssl-dev libboost-dev libboost-system-dev libboost-thread-dev
-    - name: init submodule
-      run: git submodule update --init --recursive
+        set -xeuo pipefail
+        sudo -E apt-get update
+        sudo -E apt-get install -y --no-install-recommends \
+          libcurl4-openssl-dev \
+          libboost-dev \
+          libboost-system-dev \
+          libboost-thread-dev \
+          wget \
+          build-essential \
+          cmake \
+          python-is-python3 \
+          fakeroot \
+          debhelper \
+          rpm \
+          libssl-dev
+
     - name: download prebuilt
       run: QuoteGeneration/download_prebuilt.sh
+
     - name: download SGXSDK
       run: |
         wget -r -l1 -np -nd --accept 'sgx_linux_x64_sdk_*.bin' https://download.01.org/intel-sgx/latest/linux-latest/distro/ubuntu22.04-server/
         chmod +x ./sgx_linux_x64_sdk_*.bin
+
     - name: install SGXSDK
       run: ./sgx_linux_x64_sdk_*.bin <<< "yes"
+
     - name: build
       run: source ./sgxsdk/environment; make all

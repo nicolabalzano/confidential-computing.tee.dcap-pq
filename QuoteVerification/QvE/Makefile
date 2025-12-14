@@ -84,7 +84,7 @@ QVE_CONFIG_FILE := Enclave/linux/config$(if $(FIPS),.fips).xml
 QVE_VER:= $(shell awk '$$2 ~ /QVE_VERSION/ { print substr($$3, 2, length($$3) - 2); }' $(DCAP_QG_DIR)/common/inc/internal/se_version.h)
 
 
-ENCLAVE_INC_PATH := $(COMMON_INCLUDE) -IInclude -IEnclave -I$(DCAP_QG_DIR)/quote_wrapper/common/inc -I$(DCAP_QG_DIR)/pce_wrapper/inc -I$(DCAP_QPL_DIR)/inc -I$(DCAP_QV_DIR)/appraisal/common
+ENCLAVE_INC_PATH := -IInclude -IEnclave -I$(DCAP_QG_DIR)/quote_wrapper/common/inc -I$(DCAP_QG_DIR)/pce_wrapper/inc -I$(DCAP_QPL_DIR)/inc -I$(DCAP_QV_DIR)/appraisal/common $(COMMON_INCLUDE)
 ifdef SERVTD_ATTEST
 	ENCLAVE_INC_PATH += -I$(DCAP_QV_DIR)/dcap_quoteverify/inc -I$(DCAP_QG_DIR)/quote_wrapper/tdx_verify -I$(DCAP_QG_DIR)/quote_wrapper/td_migration/inc -I../../prebuilt/openssl/inc \
 			    -I$(DCAP_QG_DIR)/quote_wrapper/servtd_attest/inc

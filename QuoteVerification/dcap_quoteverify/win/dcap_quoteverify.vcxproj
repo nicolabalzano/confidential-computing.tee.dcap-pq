@@ -118,7 +118,7 @@
       <AdditionalLibraryDirectories>..\..\package\lib\$(Platform)\$(Configuration);$(VC_LibraryPath_VC_x64_OneCore);$(SGXSDKInstallPath)bin\$(Platform)\Debug;$(OutDir);..\..\..\..\external\openssl3\lib\win64</AdditionalLibraryDirectories>
       <ModuleDefinitionFile>sgx_dcap_quoteverify.def</ModuleDefinitionFile>
       <ShowProgress>NotSet</ShowProgress>
-      <IgnoreSpecificDefaultLibraries>kernel32.lib;libucrt.lib;libucrtd.lib</IgnoreSpecificDefaultLibraries>
+      <IgnoreSpecificDefaultLibraries>kernel32.lib;libucrtd.lib</IgnoreSpecificDefaultLibraries>
       <IgnoreAllDefaultLibraries>false</IgnoreAllDefaultLibraries>
       <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>
       <CETCompat>true</CETCompat>
@@ -147,7 +147,7 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>libsgx_usgxssl.lib;OneCore.lib;ucrt.lib;user32.lib;Ws2_32.lib;sgx_urts.lib;sgx_uae_service.lib;sgx_dcap_qvl_parser.lib;sgx_dcap_qvl_attestation.lib;libcrypto.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libsgx_usgxssl.lib;OneCore.lib;ucrtd.lib;user32.lib;Ws2_32.lib;sgx_urtsd.lib;sgx_uae_service.lib;sgx_dcap_qvl_parser.lib;sgx_dcap_qvl_attestation.lib;libcrypto.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..\..\package\lib\$(Platform)\$(Configuration);$(SGXSDKInstallPath)\bin\$(Platform)\Debug;$(OutDir);..\..\..\..\external\openssl3\lib\win64</AdditionalLibraryDirectories>
       <ModuleDefinitionFile>sgx_dcap_quoteverify.def</ModuleDefinitionFile>
       <AdditionalOptions>/ignore:4099 %(AdditionalOptions)</AdditionalOptions>

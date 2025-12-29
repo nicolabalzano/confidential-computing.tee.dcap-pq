@@ -292,10 +292,10 @@ MpResult MPSynchronicSender::sendBinaryRequest(const string& serverURL, const st
         } else if (CURLE_COULDNT_RESOLVE_HOST == cret) {
             retry--;
             if (0 == retry) {
-                network_log_message(MP_REG_LOG_LEVEL_ERROR, "curl_easy_perform failed with the error: CURLE_COULDNT_RESOLVE_HOST.");
+                network_log_message(MP_REG_LOG_LEVEL_ERROR, "curl_easy_perform failed with the error: %d.\n", cret);
                 goto out;
             } else {
-                network_log_message(MP_REG_LOG_LEVEL_INFO, "curl_easy_perform failed with CURLE_COULDNT_RESOLVE_HOST... retrying in 5 seconds\n");
+                network_log_message(MP_REG_LOG_LEVEL_INFO, "curl_easy_perform failed with %d... retrying in 5 seconds\n", cret);
                 sleep(5);
                 continue;
             }

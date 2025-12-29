@@ -1,6 +1,6 @@
 [submodule "QuoteVerification/QVL"]
 	path = QuoteVerification/QVL
-	url = ../SGX-TDX-DCAP-QuoteVerificationLibrary.git
+	url = ../confidential-computing.tee.dcap.qvl.git
 	branch = .
 [submodule "external/wasm-micro-runtime"]
 	path = external/wasm-micro-runtime

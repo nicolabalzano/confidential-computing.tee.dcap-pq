@@ -1,16 +1,9 @@
 /*
  * Copyright(c) 2011-2025 Intel Corporation
+ *
  * SPDX-License-Identifier: BSD-3-Clause
  */
-/**
- * File: qe_logic.cpp
- *
- * Description: This is the implementation of the quoting class that will support
- * the reference ECDSA-P256 quoting class used by an application requiring quote
- * generation.  These are the untrusted functions of the reference code. It will
- * call the trusted functions in the ECDSA-P256 quoting enclave.
- *
- */
+
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
@@ -711,7 +704,7 @@ quote3_error_t load_qe(sgx_enclave_id_t *p_qe_eid,
         }
         g_ql_global_data.m_attributes = *p_qe_attributes;
     } else {
-        SE_TRACE(SE_TRACE_DEBUG, "QE already loaded. %d\n", g_ql_global_data.m_eid);
+        SE_TRACE(SE_TRACE_DEBUG, "QE already loaded. 0x%lx\n", g_ql_global_data.m_eid);
         *p_qe_eid = g_ql_global_data.m_eid;
         if(0 != memcpy_s(p_launch_token, sizeof(*p_launch_token),
                          &g_ql_global_data.m_launch_token, sizeof(g_ql_global_data.m_launch_token))) {

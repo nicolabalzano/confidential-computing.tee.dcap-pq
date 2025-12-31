@@ -500,6 +500,13 @@ MpResult MPUefi::getRegistrationServerInfo(uint16_t &flags, std::string &serverA
             break;
         }
 
+        if (configurationUefi->urlSize > MAX_URL_SIZE) {
+            uefi_log_message(MP_REG_LOG_LEVEL_ERROR, "getRegistrationServerInfo: URL size in UEFI variable is invalid, urlSize: %d, MAX_URL_SIZE: %d\n",
+                configurationUefi->urlSize, MAX_URL_SIZE);
+            res = MP_UEFI_INTERNAL_ERROR;
+            break;
+        }
+
 #ifdef  MP_VERIFY_UEFI_VERSION_READ
         // structure version check
         if (configurationUefi->version != MP_BIOS_UEFI_VARIABLE_VERSION_1) {

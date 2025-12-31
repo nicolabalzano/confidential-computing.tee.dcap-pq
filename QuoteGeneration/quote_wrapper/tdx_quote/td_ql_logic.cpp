@@ -1,16 +1,9 @@
 /*
  * Copyright(c) 2011-2025 Intel Corporation
+ *
  * SPDX-License-Identifier: BSD-3-Clause
  */
-/**
- * File: td_ql_logic.cpp
- *
- * Description: This is the implementation of the quoting class that will support
- * the reference ECDSA-P256 quoting class used by an application requiring quote
- * generation.  These are the untrusted functions of the reference code. It will
- * call the trusted functions in the ECDSA-P256 quoting enclave.
- *
- */
+
 #include <climits>
 #include <string.h>
 #include <limits.h>
@@ -522,7 +515,7 @@ tee_att_error_t tee_att_config_t::load_qe(bool *is_fresh_loaded) {
         }
 
     } else {
-        SE_TRACE(SE_TRACE_NOTICE, "QE already loaded. %d\n", m_eid);
+        SE_TRACE(SE_TRACE_NOTICE, "QE already loaded. 0x%lx\n", m_eid);
     }
 
     CLEANUP:

@@ -1,38 +1,9 @@
 /*
- * Copyright (C) 2011-2025 Intel Corporation. All rights reserved.
+ * Copyright(c) 2011-2025 Intel Corporation
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   * Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in
- *     the documentation and/or other materials provided with the
- *     distribution.
- *   * Neither the name of Intel Corporation nor the names of its
- *     contributors may be used to endorse or promote products derived
- *     from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
+ * SPDX-License-Identifier: BSD-3-Clause
  */
 
- /*
- * Quote Verification Enclave (QvE)
- * An architectural enclave for quote verification.
- */
 #ifndef SERVTD_ATTEST
 #ifndef SGX_TRUSTED
 #define get_fmspc_ca_from_quote qvl_get_fmspc_ca_from_quote
@@ -926,7 +897,11 @@ static quote3_error_t qve_set_quote_supplemental_data(const Quote &quote,
         supplemental_data->qe_iden_earliest_expiration_date = supplemental_dates.qe_iden_earliest_expiration_date;
         supplemental_data->tcb_level_date_tag = 0;
         supplemental_data->qe_iden_tcb_level_date_tag = 0;
-        memcpy_s(supplemental_data->sa_list, MAX_SA_LIST_SIZE, verCollatInfo.sa_list, MAX_SA_LIST_SIZE);
+
+        if (memcpy_s(supplemental_data->sa_list, MAX_SA_LIST_SIZE, verCollatInfo.sa_list, MAX_SA_LIST_SIZE) != 0) {
+            ret = SGX_QL_ERROR_UNEXPECTED;
+            break;
+        }
 
         //get matching QE identity TCB level
         //
@@ -2024,7 +1999,13 @@ static quote3_error_t token_genrator_internal(std::string json_data, uint8_t **j
         return TEE_ERROR_OUT_OF_MEMORY;
     }
     memset(*jwt_data, 0, token.length() + 1);
-    memcpy_s(*jwt_data, token.length() + 1, token.c_str(), token.length());
+
+    if (memcpy_s(*jwt_data, token.length() + 1, token.c_str(), token.length()) != 0) {
+        free(*jwt_data);
+        *jwt_data = NULL;
+        return TEE_ERROR_UNEXPECTED;
+    }
+
     *jwt_size = (uint32_t)token.length();
     return TEE_SUCCESS;
 }

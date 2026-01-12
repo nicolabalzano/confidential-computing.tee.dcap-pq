@@ -216,7 +216,7 @@ MpResult MPManagement::getAddPackageRequest(uint8_t *buffer, uint32_t &buffer_si
 MpResult MPManagement::setMembershipCertificates(const uint8_t *membershipCertificates, uint16_t membershipCertificatesSize) {
     MpResult res = m_mpuefi->setServerResponse(membershipCertificates, membershipCertificatesSize);
     if (MP_SUCCESS == res) {
-        management_log_message(MP_REG_LOG_LEVEL_INFO, "Server response have been successfully written to platform.\n");
+        management_log_message(MP_REG_LOG_LEVEL_DEBUG, "Server response have been successfully written to platform.\n");
     }
     return res;
 }

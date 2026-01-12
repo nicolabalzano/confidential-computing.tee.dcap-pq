@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2021 Intel Corporation. All rights reserved.
+ * Copyright (C) 2011-2026 Intel Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -58,8 +58,14 @@ void agent_log_message(LogLevel level, const char *format, ...) {
             case MP_REG_LOG_LEVEL_ERROR:
                 printf("%s", "ERROR: ");
                 break;
+            case MP_REG_LOG_LEVEL_WARN:
+                printf("%s", "WARN: ");
+                break;
             case MP_REG_LOG_LEVEL_INFO:
                 printf("%s", "INFO: ");
+                break;
+            case MP_REG_LOG_LEVEL_DEBUG:
+                printf("%s", "DEBUG: ");
                 break;
             default:
                 break;
@@ -84,8 +90,14 @@ void default_agent_log_message(LogLevel level, const char *format, ...) {
         case MP_REG_LOG_LEVEL_ERROR:
             printf("%s", "ERROR: ");
             break;
+        case MP_REG_LOG_LEVEL_WARN:
+            printf("%s", "WARN: ");
+            break;
         case MP_REG_LOG_LEVEL_INFO:
             printf("%s", "INFO: ");
+            break;
+        case MP_REG_LOG_LEVEL_DEBUG:
+            printf("%s", "DEBUG: ");
             break;
         default:
             break;

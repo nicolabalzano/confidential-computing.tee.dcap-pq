@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2022 Intel Corporation. All rights reserved.
+ * Copyright (C) 2011-2026 Intel Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -87,9 +87,10 @@ struct _config_patterns_t{
 
 static const char *log_level_name[]={
     "none",
-    "func",
     "error",
-    "info"
+    "warn",
+    "info",
+    "debug"
 };
 
 static const char *proxy_type_name[]={
@@ -146,7 +147,7 @@ LogLevel read_log_level(const char *str, uint32_t len)
         }
      }
      agent_log_message(MP_REG_LOG_LEVEL_ERROR, "Invalid log level %.*s\n",len,str);
-     return MP_REG_LOG_LEVEL_ERROR;
+     return MP_REG_LOG_LEVEL_INFO;
 }
 
 //function to decode proxy type from string to integer value
@@ -229,7 +230,7 @@ bool AgentConfiguration::read(MPConfigurations& conf)
     config_entry_t entries[config_value_nums];
     memset(&entries,0,sizeof(entries));
     memset(&conf, 0, sizeof(MPConfigurations));
-    conf.log_level = MP_REG_LOG_LEVEL_ERROR;//default log level
+    conf.log_level = MP_REG_LOG_LEVEL_INFO;//default log level
     
     memcpy(&(conf.uefi_path), EFIVARS_FILE_SYSTEM, sizeof(EFIVARS_FILE_SYSTEM));
     

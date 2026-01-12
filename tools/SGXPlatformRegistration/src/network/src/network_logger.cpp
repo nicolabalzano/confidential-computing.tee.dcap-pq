@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2021 Intel Corporation. All rights reserved.
+ * Copyright (C) 2011-2026 Intel Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -55,8 +55,14 @@ void network_log_message_aux(LogLevel glog_level, LogLevel level, const char *fo
             case MP_REG_LOG_LEVEL_ERROR:
                 printf("%s", "ERROR: ");
                 break;
+            case MP_REG_LOG_LEVEL_WARN:
+                printf("%s", "WARN: ");
+                break;
             case MP_REG_LOG_LEVEL_INFO:
                 printf("%s", "INFO: ");
+                break;
+            case MP_REG_LOG_LEVEL_DEBUG:
+                printf("%s", "DEBUG: ");
                 break;
             default:
                 break;
@@ -81,8 +87,14 @@ void default_network_log_message(LogLevel glog_level, LogLevel level, const char
         case MP_REG_LOG_LEVEL_ERROR:
             printf("%s", "ERROR: ");
             break;
+        case MP_REG_LOG_LEVEL_WARN:
+            printf("%s", "WARN: ");
+            break;
         case MP_REG_LOG_LEVEL_INFO:
             printf("%s", "INFO: ");
+            break;
+        case MP_REG_LOG_LEVEL_DEBUG:
+            printf("%s", "DEBUG: ");
             break;
         default:
             break;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2021 Intel Corporation. All rights reserved.
+ * Copyright (C) 2011-2026 Intel Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -121,14 +121,14 @@ static MpResult http_network_init(http_network_info_t *info, const char *url, Pr
         if (urlComp.dwPasswordLength > 0) {
             info->proxy_password = urlComp.lpszPassword;
         }
-        network_log_message(MP_REG_LOG_LEVEL_INFO, "Using manual proxy settings, proxy url: %s\n", proxy.proxy_url);
+        network_log_message(MP_REG_LOG_LEVEL_DEBUG, "Using manual proxy settings, proxy url: %s\n", proxy.proxy_url);
         break;
     case MP_REG_PROXY_TYPE_DIRECT_ACCESS:
         proxy_access_type = WINHTTP_ACCESS_TYPE_NO_PROXY;
         break;
     default:
         proxy_access_type = WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY;
-        network_log_message(MP_REG_LOG_LEVEL_INFO, "Unrecognized proxy type, using default windows configurations. %d\n", proxy.proxy_type);
+        network_log_message(MP_REG_LOG_LEVEL_DEBUG, "Unrecognized proxy type, using default windows configurations. %d\n", proxy.proxy_type);
         break;
     }
 
@@ -149,7 +149,7 @@ static MpResult http_network_init(http_network_info_t *info, const char *url, Pr
         goto out;
     }
 
-    network_log_message(MP_REG_LOG_LEVEL_INFO, "HTTP network connect, server: %ls, port %u, path: %ls\n",
+    network_log_message(MP_REG_LOG_LEVEL_DEBUG, "HTTP network connect, server: %ls, port %u, path: %ls\n",
                         urlComp.lpszHostName, urlComp.nPort, urlComp.lpszUrlPath);
     info->internet = WinHttpOpen(L"SGXRegistrationService", proxy_access_type, p_proxy, p_bypass, 0);
     if (info->internet == NULL) {
@@ -207,7 +207,7 @@ static MpResult http_network_init(http_network_info_t *info, const char *url, Pr
         DWORD                      cbProxyInfoSize = sizeof(ProxyInfo);
         WCHAR                      wpurl[MAX_PATH];
         size_t                     len;
-        network_log_message(MP_REG_LOG_LEVEL_INFO, "try auto proxy\n");
+        network_log_message(MP_REG_LOG_LEVEL_DEBUG, "try auto proxy\n");
         if (mbstowcs_s(&len, wpurl, MAX_PATH, url, MAX_PATH - 1) != 0) {
             network_log_message(MP_REG_LOG_LEVEL_ERROR, "url size too large: %ls\n", url);
             goto out;
@@ -224,7 +224,7 @@ static MpResult http_network_init(http_network_info_t *info, const char *url, Pr
         if (WinHttpGetProxyForUrl(info->internet, wpurl, &AutoProxyOptions, &ProxyInfo)) {
             if (WinHttpSetOption(info->http_handle,WINHTTP_OPTION_PROXY,&ProxyInfo,cbProxyInfoSize)) {
                 proxy_set_succ = 1;
-                network_log_message(MP_REG_LOG_LEVEL_INFO, "succ to use proxy type %d, url: %ls, bypass: %ls\n", ProxyInfo.dwAccessType, ProxyInfo.lpszProxy, ProxyInfo.lpszProxyBypass);
+                network_log_message(MP_REG_LOG_LEVEL_DEBUG, "succ to use proxy type %d, url: %ls, bypass: %ls\n", ProxyInfo.dwAccessType, ProxyInfo.lpszProxy, ProxyInfo.lpszProxyBypass);
             }else {
                 network_log_message(MP_REG_LOG_LEVEL_ERROR, "fail to set proxy type %d, url: %ls, bypass: %ls, last error: %d\n", ProxyInfo.dwAccessType, ProxyInfo.lpszProxy, ProxyInfo.lpszProxyBypass, GetLastError());
             }
@@ -237,7 +237,7 @@ static MpResult http_network_init(http_network_info_t *info, const char *url, Pr
         }
         if (!proxy_set_succ) {
             //ignored proxy setting error for verified proxy and fall through to default proxy setting
-            network_log_message(MP_REG_LOG_LEVEL_INFO, "auto proxy detection failed, default proxy used\n");
+            network_log_message(MP_REG_LOG_LEVEL_DEBUG, "auto proxy detection failed, default proxy used\n");
         }
     }
 
@@ -283,7 +283,7 @@ static MpResult http_network_send_data(http_network_info_t *info, const string& 
 
         // Set autenticated proxy
         if (info->proxy_auth_scheme != 0) {//proxy authentication required
-            network_log_message(MP_REG_LOG_LEVEL_INFO, "proxy scheme %d used\n", info->proxy_auth_scheme);
+            network_log_message(MP_REG_LOG_LEVEL_DEBUG, "proxy scheme %d used\n", info->proxy_auth_scheme);
             (void)WinHttpSetCredentials(info->http_handle, WINHTTP_AUTH_TARGET_PROXY, info->proxy_auth_scheme,
                 info->proxy_username, info->proxy_password, NULL);//ignore the return value if proxy authentication setting failed
         }
@@ -323,7 +323,7 @@ static MpResult http_network_send_data(http_network_info_t *info, const string& 
         assert(left_size >= 3);
         (void)wcscat_s(header, L"\r\n");
 
-        network_log_message(MP_REG_LOG_LEVEL_INFO, "HTTP header: \n%ls", header);
+        network_log_message(MP_REG_LOG_LEVEL_DEBUG, "HTTP header: \n%ls", header);
         //send request message
         if (!WinHttpSendRequest(info->http_handle, header, (DWORD)wcsnlen_s(header, MAX_HEADER_SIZE), WINHTTP_NO_REQUEST_DATA, 0, (DWORD)msg_size, 0)) {
             network_log_message(MP_REG_LOG_LEVEL_ERROR, "Fail to send http request, last error: %d\n", GetLastError());
@@ -337,7 +337,7 @@ static MpResult http_network_send_data(http_network_info_t *info, const string& 
             network_log_message(MP_REG_LOG_LEVEL_ERROR, "Fail to write HTTP Data, last error: %d\n", GetLastError());
             break;
         }
-        network_log_message(MP_REG_LOG_LEVEL_INFO, "Data sent to server and wait for response\n");
+        network_log_message(MP_REG_LOG_LEVEL_DEBUG, "Data sent to server and wait for response\n");
 
 
         if (!WinHttpQueryOption(info->http_handle, WINHTTP_OPTION_SECURITY_FLAGS, &dwHttpSecurityFlags, &dwHttpSecurityFlagsSize)) {
@@ -400,9 +400,9 @@ static MpResult http_network_send_data(http_network_info_t *info, const string& 
                 size_t count_coverted = 0;
                 errno_t err_covert = wcstombs_s(&count_coverted, header_line_str_char, (const wchar_t *)header_line_str, sizeof(header_line_str_char));
                 if (0 == err_covert && wcslen((const wchar_t *)header_line_str) + 1 == count_coverted) {
-                    network_log_message(MP_REG_LOG_LEVEL_INFO, "Request ID: %s\n", header_line_str_char);
+                    network_log_message(MP_REG_LOG_LEVEL_DEBUG, "Request ID: %s\n", header_line_str_char);
                 } else {
-                    network_log_message(MP_REG_LOG_LEVEL_ERROR, "Error during equest-ID convertion: %d, last error: %d\n", err_covert, GetLastError());
+                    network_log_message(MP_REG_LOG_LEVEL_ERROR, "Error during Request-ID convertion: %d, last error: %d\n", err_covert, GetLastError());
                     break;
                 }
             } else {

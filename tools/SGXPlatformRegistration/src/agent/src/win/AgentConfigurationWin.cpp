@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2021 Intel Corporation. All rights reserved.
+ * Copyright (C) 2011-2026 Intel Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -202,26 +202,26 @@ bool AgentConfiguration::read(MPConfigurations& conf)
     uint32_t value = 0;
     TCHAR valueStr[MAX_PATH_SIZE] = { 0 };
     memset(&conf, 0, sizeof(MPConfigurations));
-    conf.log_level = MP_REG_LOG_LEVEL_ERROR;//default log level
+    conf.log_level = MP_REG_LOG_LEVEL_INFO;//default log level
 
     res = mpa_read_registry_dword(MP_PROXY_CONF, _T("type"), &value);
     if (MP_SUCCESS == res) {
         conf.proxy.proxy_type = (ProxyType)value;
-        agent_log_message(MP_REG_LOG_LEVEL_INFO, "Found proxy type reg key: %d\n", value);
+        agent_log_message(MP_REG_LOG_LEVEL_DEBUG, "Found proxy type reg key: %d\n", value);
     } else {
         uint32_t proxy_type = MP_REG_PROXY_TYPE_DEFAULT_PROXY;
         conf.proxy.proxy_type = (ProxyType) proxy_type;
         mpa_create_registry_and_set_default_value_dword(MP_PROXY_CONF, _T("type"), proxy_type);
-        agent_log_message(MP_REG_LOG_LEVEL_INFO, "Using deafult proxy type settings: %d.\n", value);
+        agent_log_message(MP_REG_LOG_LEVEL_DEBUG, "Using default proxy type settings: %d.\n", value);
     }
 
     res = mpa_read_registry_string(MP_PROXY_CONF, _T("url"), valueStr, (uint32_t)sizeof(valueStr));
     if (MP_SUCCESS == res) {
-        agent_log_message(MP_REG_LOG_LEVEL_INFO, "Found proxy url reg key: %s\n", valueStr);
+        agent_log_message(MP_REG_LOG_LEVEL_DEBUG, "Found proxy url reg key: %s\n", valueStr);
         memcpy(conf.proxy.proxy_url, valueStr, strnlen_s(valueStr, sizeof(valueStr)));
     } else {
         if (MP_REG_PROXY_TYPE_MANUAL_PROXY == conf.proxy.proxy_type) {
-            agent_log_message(MP_REG_LOG_LEVEL_ERROR, "Found manual proxy type reg key without url. Using deafult proxy configuration.\n");
+            agent_log_message(MP_REG_LOG_LEVEL_ERROR, "Found manual proxy type reg key without url. Using default proxy configuration.\n");
             conf.proxy.proxy_type = MP_REG_PROXY_TYPE_DEFAULT_PROXY;
         }
         mpa_create_registry_string_proxy_url(MP_PROXY_CONF);
@@ -230,19 +230,17 @@ bool AgentConfiguration::read(MPConfigurations& conf)
     res = mpa_read_registry_dword(MP_LOG_LEVEL_CONF, _T("level"), &value);
     if (MP_SUCCESS == res) {
         conf.log_level = (LogLevel)value;
-        agent_log_message(MP_REG_LOG_LEVEL_INFO, "Found log level reg key: %d\n", value);
+        agent_log_message(MP_REG_LOG_LEVEL_DEBUG, "Found log level reg key: %d\n", value);
     } else {
-        uint32_t log_level = MP_REG_LOG_LEVEL_ERROR;
-        conf.log_level = (LogLevel)log_level;
-        mpa_create_registry_and_set_default_value_dword(MP_LOG_LEVEL_CONF, _T("level"), log_level);
-        agent_log_message(MP_REG_LOG_LEVEL_INFO, "Using deafult log level settings: %d.\n", log_level);
+        mpa_create_registry_and_set_default_value_dword(MP_LOG_LEVEL_CONF, _T("level"), conf.log_level);
+        agent_log_message(MP_REG_LOG_LEVEL_DEBUG, "Using default log level settings: %d.\n", conf.log_level);
     }
 
     res = mpa_read_registry_string(MP_SUBSCRIPTION_KEY_CONF, _T("token"), valueStr, (uint32_t)sizeof(valueStr));
     if (MP_SUCCESS == res) {
         memcpy_s(conf.server_add_package_subscription_key, SUBSCRIPTION_KEY_SIZE, valueStr, strnlen_s(valueStr, sizeof(valueStr)));
         conf.server_add_package_subscription_key[SUBSCRIPTION_KEY_SIZE] = _T('\0');
-        agent_log_message(MP_REG_LOG_LEVEL_INFO, "Found subscription token reg key: %s\n", valueStr);
+        agent_log_message(MP_REG_LOG_LEVEL_DEBUG, "Found subscription token reg key: %s\n", valueStr);
     }
     else {
         //the sub scription key should be applied from Inte's registration server, user need provide this key

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2021 Intel Corporation. All rights reserved.
+ * Copyright (C) 2011-2026 Intel Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -41,7 +41,7 @@ using namespace std;
 
 #include "logger.h"
 
-LogLevel glog_level = MP_REG_LOG_LEVEL_ERROR;
+LogLevel glog_level = MP_REG_LOG_LEVEL_INFO;
 
 #ifndef _WIN32
 
@@ -66,12 +66,19 @@ extern "C" void log_message_aux(
 	fprintf(f, "%s", str.c_str());
 
     switch (level) {
-        case MP_REG_LOG_LEVEL_ERROR:
-            fprintf(f, "%s", "ERROR: ");
-            break;
-        case MP_REG_LOG_LEVEL_INFO:
+		case MP_REG_LOG_LEVEL_ERROR:
+			fprintf(f, "%s", "ERROR: ");
+			break;
+		case MP_REG_LOG_LEVEL_WARN:
+			fprintf(f, "%s", "WARN: ");
+			break;
+		case MP_REG_LOG_LEVEL_INFO:
+			fprintf(f, "%s", "INFO: ");
+			break;
+        case MP_REG_LOG_LEVEL_DEBUG:
+			fprintf(f, "%s", "DEBUG: ");
+			break;
         default:
-            fprintf(f, "%s", "INFO: ");
             break;
     }
 
@@ -116,21 +123,29 @@ void SvcReportEvent(LogLevel level, char* buffer)
             case MP_REG_LOG_LEVEL_ERROR:
                 eventType = EVENTLOG_ERROR_TYPE;
                 break;
+			case MP_REG_LOG_LEVEL_WARN:
+				eventType = EVENTLOG_WARNING_TYPE;
+				break;
             case MP_REG_LOG_LEVEL_INFO:
+            case MP_REG_LOG_LEVEL_DEBUG:
+				eventType =  EVENTLOG_INFORMATION_TYPE;
+				break;
             default:
-                eventType = EVENTLOG_INFORMATION_TYPE;
                 break;
         }
 
-		ReportEvent(hEventSource,  // event log handle
-            eventType, // event type
-			0,					 // event category
-			SVC_INFO,		     // event identifier
-			NULL,                // no security identifier
-			2,                   // size of lpszStrings array
-			0,                   // no binary data
-			lpszStrings,         // array of strings
-			NULL);               // no binary data
+		if (level != MP_REG_LOG_LEVEL_NONE)
+		{
+			ReportEvent(hEventSource,  // event log handle
+				eventType, // event type
+				0,					 // event category
+				SVC_INFO,		     // event identifier
+				NULL,                // no security identifier
+				2,                   // size of lpszStrings array
+				0,                   // no binary data
+				lpszStrings,         // array of strings
+				NULL);               // no binary data
+		}
 
 		DeregisterEventSource(hEventSource);
 	}
@@ -143,9 +158,15 @@ static void writeToStdout(LogLevel level, const char* buffer)
         case MP_REG_LOG_LEVEL_ERROR:
             printf("%s", "ERROR: ");
             break;
+        case MP_REG_LOG_LEVEL_WARN:
+            printf("%s", "WARN: ");
+            break;
         case MP_REG_LOG_LEVEL_INFO:
             printf("%s", "INFO: ");
             break;
+	    case MP_REG_LOG_LEVEL_DEBUG:
+			printf("%s", "DEBUG: ");
+			break;
         default:
             break;
     }

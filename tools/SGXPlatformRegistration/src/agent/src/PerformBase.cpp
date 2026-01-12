@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2021 Intel Corporation. All rights reserved.
+ * Copyright (C) 2011-2026 Intel Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -76,13 +76,13 @@ bool PerformBase::perform(const uint8_t *request, const uint32_t &requestSize, u
                 break;
             }
         }
-        agent_log_message(MP_REG_LOG_LEVEL_INFO, "Response: HTTP Response Code: %d\n", statusCode);
+        agent_log_message(MP_REG_LOG_LEVEL_DEBUG, "Response: HTTP Response Code: %d\n", statusCode);
     
         /* Check the response code for errors */
         if(getSuccessHttpResponseCode() == statusCode)
         {
             /* RS reports an OK response.*/
-            agent_log_message(MP_REG_LOG_LEVEL_INFO, "RS reports a %d OK.\n", getSuccessHttpResponseCode());
+            agent_log_message(MP_REG_LOG_LEVEL_DEBUG, "RS reports a %d OK.\n", getSuccessHttpResponseCode());
             res = useResponse(response, reponseSize);
             if (MP_SUCCESS != res) {
                 agent_log_message(MP_REG_LOG_LEVEL_ERROR, "Failed to used server response, error: %d\n", res);
@@ -155,7 +155,7 @@ bool PerformBase::perform(const uint8_t *request, const uint32_t &requestSize, u
     {        
         if (MP_INSUFFICIENT_PRIVILEGES == res) 
         {
-            agent_log_message(MP_REG_LOG_LEVEL_INFO, "Warning: The UEFI variable is in read-only mode, so the registration status could NOT be set.\n");
+            agent_log_message(MP_REG_LOG_LEVEL_WARN, "The UEFI variable is in read-only mode, so the registration status could NOT be set.\n");
         }
         else 
         {

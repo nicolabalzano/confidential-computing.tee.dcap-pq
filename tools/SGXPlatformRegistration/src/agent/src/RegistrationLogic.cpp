@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2021 Intel Corporation. All rights reserved.
+ * Copyright (C) 2011-2026 Intel Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,38 +46,37 @@ extern bool SvcUninstall();
 #endif
 
 void RegistrationLogic::registerPlatform() {
-	MPConfigurations conf;
+    MPConfigurations conf;
 	AgentConfiguration agentConfigurations;
-    
+
     // Read agent configuration file
 	agentConfigurations.read(conf);
 
     // Create RegistrationService instance with the required configurations
     RegistrationService registrationService(conf);
-    agent_log_message(MP_REG_LOG_LEVEL_FUNC, "SGX Registration Agent version: %s\n", STRPRODUCTVER);
+    agent_log_message(MP_REG_LOG_LEVEL_INFO, "SGX Registration Agent version: %s\n", STRPRODUCTVER);
 
     if (!registrationService.isMultiPackageCapable()) {
 #ifdef _WIN32
-        agent_log_message(MP_REG_LOG_LEVEL_FUNC, "Platform doesn't support registration. removing service..\n");
+        agent_log_message(MP_REG_LOG_LEVEL_INFO, "Platform doesn't support registration. removing service..\n");
         if (!SvcUninstall()) {
-            agent_log_message(MP_REG_LOG_LEVEL_FUNC, "Failed to remove service.\n");
+            agent_log_message(MP_REG_LOG_LEVEL_INFO, "Failed to remove service.\n");
         } else {
-            agent_log_message(MP_REG_LOG_LEVEL_FUNC, "Successfully removed windows SGX registration service.\n");
+            agent_log_message(MP_REG_LOG_LEVEL_INFO, "Successfully removed windows SGX registration service.\n");
         }
 #else 
-        agent_log_message(MP_REG_LOG_LEVEL_FUNC, "Platform doesn't support registration. \n");
+        agent_log_message(MP_REG_LOG_LEVEL_INFO, "Platform doesn't support registration. \n");
 #endif
         return;
     }
     else {
-        agent_log_message(MP_REG_LOG_LEVEL_INFO, "Multi-Package capable.\n");
+        agent_log_message(MP_REG_LOG_LEVEL_DEBUG, "Multi-Package capable.\n");
     }
 
-
-    agent_log_message(MP_REG_LOG_LEVEL_FUNC, "Starts Registration Agent Flow.\n");
+    agent_log_message(MP_REG_LOG_LEVEL_INFO, "Starts Registration Agent Flow.\n");
     // Preform registration flow if needed
     registrationService.registerPlatformIfNeeded();
-    agent_log_message(MP_REG_LOG_LEVEL_FUNC, "Finished Registration Agent Flow.\n");
+    agent_log_message(MP_REG_LOG_LEVEL_INFO, "Finished Registration Agent Flow.\n");
 }
 
 

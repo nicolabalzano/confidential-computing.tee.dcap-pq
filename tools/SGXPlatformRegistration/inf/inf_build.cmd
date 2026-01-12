@@ -15,12 +15,19 @@ IF "%1"=="" (
       SET VERSION=%1
 )
 
+IF "%2"=="" (
+      SET CONF=Release
+  ) ELSE (
+    IF /i "%2"=="release" SET CONF=Release
+    IF /i "%2"=="debug" SET CONF=Debug
+)
+
 echo *** Welcome to the SGX MPRA Installer Build Script ***
 echo:
 
 SET SRC_DIR=..\
-SET DST_DIR=.\Output
-SET BIN_DIR=%SRC_DIR%\x64\Release
+SET DST_DIR=.\Output\%CONF%
+SET BIN_DIR=%SRC_DIR%\x64\%CONF%
 set TOOLSFOLDER=.\..\..\..\..\installer_tools\Tools\standalone_build_se\sign
 set SIGNTOOL="%TOOLSFOLDER%\SignFile.exe"
 

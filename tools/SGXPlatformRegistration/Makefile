@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2021 - 2025 Intel Corporation. All rights reserved.
+# Copyright (C) 2021 - 2026 Intel Corporation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -139,7 +139,7 @@ CXXFLAGS := -std=c++17 -fPIC -Wnon-virtual-dtor -fstack-protector -ffunction-sec
 # debug -O0 -UDEBUG -DNDEBUG
 ifdef DEBUG
 	CXXFLAGS += -O0 -ggdb -DDEBUG -UNDEBUG -DSE_DEBUG_LEVEL=SE_TRACE_DEBUG -DDEBUG_MODE=1
-#	CXXFLAGS += -O0 -g3 -fsanitize=address -DDEBUG -UNDEBUG -DSE_DEBUG_LEVEL=SE_TRACE_DEBUG -DDEBUG_MODE=1
+	LDFLAGS_SO += -O0 -ggdb -DDEBUG -UNDEBUG -DSE_DEBUG_LEVEL=SE_TRACE_DEBUG -DDEBUG_MODE=1
 else
 	CXXFLAGS += -O2 -D_FORTIFY_SOURCE=$(FORTIFY_SOURCE_VAL) -UDEBUG -DNDEBUG
 endif

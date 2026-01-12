@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2025 Intel Corporation. All rights reserved.
+ * Copyright (C) 2011-2026 Intel Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -167,13 +167,14 @@ void RegistrationService::registerPlatformIfNeeded() {
             switch(reqType)
             {
                 case MP_REQ_REGISTRATION:
-                    agent_log_message(MP_REG_LOG_LEVEL_INFO, "Registration Flow - PLATFORM_ESTABLISHMENT or TCB_RECOVERY.\n");
-                    
                     if (flags & SERVER_INFO_FLAG_RS_NOT_SAVE_KEYS) {
-                        agent_log_message(MP_REG_LOG_LEVEL_FUNC, "SGX MP Server configuration flag indicates that Registration Server won't save encrypted platform keys.\n");
-                        agent_log_message(MP_REG_LOG_LEVEL_FUNC, "Platform registration request (PLATFORM_MANIFEST) won't be send to Registration Server.\n");
-                        agent_log_message(MP_REG_LOG_LEVEL_FUNC, "Please use management tool or PCKCertIDRetrievalTool to read PLATFORM_MANIFEST.\n");
+                        agent_log_message(MP_REG_LOG_LEVEL_WARN, "MPA won't perform platform registration because \"SGX Auto MP Registration\" is disabled in the BIOS.\n");
+                        agent_log_message(MP_REG_LOG_LEVEL_INFO, "To use the MPA for platform registration, \"SGX Auto MP Registration\" must be enabled in the BIOS. Alternatively, use the Multi-Package Management Tool or the PCK Cert ID Retrieval Tool for platform registration.\n");
                         break;
+                    }
+                    else
+                    {
+                        agent_log_message(MP_REG_LOG_LEVEL_DEBUG, "\"SGX Auto MP Registration\" is enabled in the BIOS.\n");
                     }
 
                     uint8_t manifest[MAX_REQUEST_SIZE];
@@ -197,13 +198,13 @@ void RegistrationService::registerPlatformIfNeeded() {
                     }			    
 
                     if (registered) {
-                        agent_log_message(MP_REG_LOG_LEVEL_FUNC, "Registration Flow - PLATFORM_ESTABLISHMENT or TCB_RECOVERY passed successfully.\n");
+                        agent_log_message(MP_REG_LOG_LEVEL_INFO, "Registration Flow - PLATFORM_ESTABLISHMENT or TCB_RECOVERY passed successfully.\n");
                     } else {
-                        agent_log_message(MP_REG_LOG_LEVEL_FUNC, "Registration Flow - PLATFORM_ESTABLISHMENT or TCB_RECOVERY failed.\n");
+                        agent_log_message(MP_REG_LOG_LEVEL_INFO, "Registration Flow - PLATFORM_ESTABLISHMENT or TCB_RECOVERY failed.\n");
                     }
                     break;
                 case MP_REQ_ADD_PACKAGE:
-                    agent_log_message(MP_REG_LOG_LEVEL_INFO, "Registration Flow - ADD_REQUEST.\n");
+                    agent_log_message(MP_REG_LOG_LEVEL_DEBUG, "Registration Flow - ADD_REQUEST.\n");
 
                     uint8_t addPackage[MAX_REQUEST_SIZE];
                     requestSize = sizeof(addPackage);
@@ -220,9 +221,9 @@ void RegistrationService::registerPlatformIfNeeded() {
                     pb = nullptr;
 
                     if (registered) {
-                        agent_log_message(MP_REG_LOG_LEVEL_FUNC, "Registration Flow - ADD_REQUEST passed successfully.\n");
+                        agent_log_message(MP_REG_LOG_LEVEL_INFO, "Registration Flow - ADD_REQUEST passed successfully.\n");
                     } else {
-                        agent_log_message(MP_REG_LOG_LEVEL_FUNC, "Registration Flow - ADD_REQUEST failed.\n");
+                        agent_log_message(MP_REG_LOG_LEVEL_INFO, "Registration Flow - ADD_REQUEST failed.\n");
                     }
                     break;
                 default:
@@ -239,7 +240,7 @@ void RegistrationService::registerPlatformIfNeeded() {
     else
     {
         if(status.errorCode == MPA_SUCCESS) {
-            agent_log_message(MP_REG_LOG_LEVEL_FUNC, "Registration Flow - Registration status indicates registration is completed successfully. MPA has nothing to do.\n");
+            agent_log_message(MP_REG_LOG_LEVEL_INFO, "Registration Flow - Registration status indicates registration is completed successfully. MPA has nothing to do.\n");
         }
         else
         {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2021 Intel Corporation. All rights reserved.
+ * Copyright (C) 2011-2026 Intel Corporation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -80,7 +80,7 @@ static size_t responseHeaderCallBack(char* b, size_t size, size_t nitems, void *
     string strline = string(b, numbytes);
     string *errorCodeStr = (string*)userdata;
     if (numbytes > 2) {
-        network_log_message_aux(mpNetworkLoglevel, MP_REG_LOG_LEVEL_INFO, "%.*s", numbytes, b);
+        network_log_message_aux(mpNetworkLoglevel, MP_REG_LOG_LEVEL_DEBUG, "%.*s", numbytes, b);
     }
 
     size_t found = strline.find(ERROR_CODE_STR_RESPONSE_HEADER);
@@ -186,8 +186,8 @@ MpResult MPSynchronicSender::sendBinaryRequest(const string& serverURL, const st
     switch (m_proxy.proxy_type) {
         case MP_REG_PROXY_TYPE_DEFAULT_PROXY:
             //curl auto detects https_proxy environment variable
-            network_log_message(MP_REG_LOG_LEVEL_INFO, "Using default/environment proxy settings.\n");
-            //network_log_message(MP_REG_LOG_LEVEL_INFO, "https_proxy = %s. http_proxy = %s\n", getenv("https_proxy"), getenv("http_proxy"));
+            network_log_message(MP_REG_LOG_LEVEL_DEBUG, "Using default/environment proxy settings.\n");
+            //network_log_message(MP_REG_LOG_LEVEL_DEBUG, "https_proxy = %s. http_proxy = %s\n", getenv("https_proxy"), getenv("http_proxy"));
         break;
         case MP_REG_PROXY_TYPE_MANUAL_PROXY:
             cret = curl_easy_setopt(curl, CURLOPT_PROXY, m_proxy.proxy_url);
@@ -196,7 +196,7 @@ MpResult MPSynchronicSender::sendBinaryRequest(const string& serverURL, const st
                 res = MP_UNEXPECTED_ERROR;
                 goto out;
             }
-            network_log_message(MP_REG_LOG_LEVEL_INFO, "Using manual proxy settings, proxy url: %s\n", m_proxy.proxy_url);
+            network_log_message(MP_REG_LOG_LEVEL_DEBUG, "Using manual proxy settings, proxy url: %s\n", m_proxy.proxy_url);
         break;
         default:
             if (MP_REG_PROXY_TYPE_DIRECT_ACCESS != m_proxy.proxy_type) {
@@ -268,7 +268,7 @@ MpResult MPSynchronicSender::sendBinaryRequest(const string& serverURL, const st
         goto out;
     }
 
-    network_log_message(MP_REG_LOG_LEVEL_INFO, "Request size: %d\n", requestSize);
+    network_log_message(MP_REG_LOG_LEVEL_DEBUG, "Request size: %d\n", requestSize);
     /* Set the request size */
     cret = curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, requestSize);
     if (CURLE_OK != cret) {
@@ -295,7 +295,7 @@ MpResult MPSynchronicSender::sendBinaryRequest(const string& serverURL, const st
                 network_log_message(MP_REG_LOG_LEVEL_ERROR, "curl_easy_perform failed with the error: %d.\n", cret);
                 goto out;
             } else {
-                network_log_message(MP_REG_LOG_LEVEL_INFO, "curl_easy_perform failed with %d... retrying in 5 seconds\n", cret);
+                network_log_message(MP_REG_LOG_LEVEL_DEBUG, "curl_easy_perform failed with %d... retrying in 5 seconds\n", cret);
                 sleep(5);
                 continue;
             }
@@ -339,7 +339,7 @@ out:
         else {
             network_log_message(MP_REG_LOG_LEVEL_ERROR, "Readable curl error: %s\n", curl_easy_strerror(cret));
         }
-        network_log_message(MP_REG_LOG_LEVEL_INFO, "libcurl version: %s\n", curl_version());
+        network_log_message(MP_REG_LOG_LEVEL_DEBUG, "libcurl version: %s\n", curl_version());
     }
     if (header_list) {
         curl_slist_free_all(header_list);

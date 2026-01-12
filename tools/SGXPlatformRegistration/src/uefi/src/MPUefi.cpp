@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2011-2025 Intel Corporation
+ * Copyright(c) 2011-2026 Intel Corporation
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -465,7 +465,7 @@ MpResult MPUefi::setRegistrationStatus(const MpRegistrationStatus& status) {
         if (status.packageInfoStatus == MP_TASK_COMPLETED) {
             statusUefi.status |= PACKAGE_INFO_COMPLETE_BIT_MASK;
         }
-        uefi_log_message(MP_REG_LOG_LEVEL_INFO, "setRegistrationStatus: status.status = 0x%02x, statusUefi.status = 0x%02x.\n", status.status, statusUefi.status);
+        uefi_log_message(MP_REG_LOG_LEVEL_DEBUG, "setRegistrationStatus: status.status = 0x%02x, statusUefi.status = 0x%02x.\n", status.status, statusUefi.status);
 
         statusUefi.errorCode = status.errorCode;
 
@@ -473,7 +473,7 @@ MpResult MPUefi::setRegistrationStatus(const MpRegistrationStatus& status) {
         int numOfBytes = m_uefi->writeUEFIVar(UEFI_VAR_STATUS, (const uint8_t*)(&statusUefi), sizeof(statusUefi), false);
         if (numOfBytes != sizeof(statusUefi)) {
             if(numOfBytes == -1) {
-                uefi_log_message(MP_REG_LOG_LEVEL_INFO, "Warning: fail to write regsitration status uefi variable, maybe it is in read-only mode.\n");
+                uefi_log_message(MP_REG_LOG_LEVEL_WARN, "fail to write registration status uefi variable, maybe it is in read-only mode.\n");
                 res = MP_INSUFFICIENT_PRIVILEGES;
                 break;
             }

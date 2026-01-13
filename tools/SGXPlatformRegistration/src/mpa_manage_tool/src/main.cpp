@@ -79,7 +79,7 @@ std::map<const string, handle_func_with_args> optionsWithArgs;
 std::map<const string, handle_func> optionsNoArgs;
 MPManagement *manage = NULL;
 
-LogLevel glog_level = MP_REG_LOG_LEVEL_ERROR;
+LogLevel glog_level = MP_REG_LOG_LEVEL_INFO;
 int gargc = 0;
 
 char* getCmdOption(char** begin, char** end, const std::string & option)
@@ -110,23 +110,23 @@ int numOfCommandLineCommands(char** begin, char** end, char c) {
 
 int usage() {
     management_log_message(MP_REG_LOG_LEVEL_INFO, "Tools options:\n");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\n-h\t\t\t\t\t\t\t Shows usage instructions.");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\n-v\t\t\t\t\t\t\t Verbose logs.");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\n-get_platform_manifest <file_name>\t\t\t Copies Platform Manifest into a file. Sets registration status to completed.");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\n  \t\t\t\t\t\t\t The users responsibility is to pass Platform Manifest to registration server.");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\n-get_add_package <file_name>\t\t\t\t Copies pending Add Package request into a file.");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\n  \t\t\t\t\t\t\t The users responsibility is to pass Add Package to registration server");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\n  \t\t\t\t\t\t\t and set the resulting Platform Certificate using -set_membership_certificates.");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\n-set_membership_certificates <file_name>\t\t Sets the Membership Certificates from file into BIOS, completing Add Package.");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\n-get_key_blobs <key_blobs_file_name>\t\t\t Copies Package Info Key Blobs into a file. Sets package info status to completed.");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\n-set_server_info <server_id_file_name> <hex_flags> <URL> Sets registration server configurations.");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\n-get_server_info\t\t\t\t\t Prints SGX server information.");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\n-get_registration_status\t\t\t\t Prints and returns registration status.");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\n-get_last_registration_error_code\t\t\t Prints and returns last registration error code.");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\n-get_sgx_status\t\t\t\t\t\t Prints SGX status.");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "-h\t\t\t\t\t\t\t Shows usage instructions.\n");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "-v\t\t\t\t\t\t\t Verbose logs.\n");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "-get_platform_manifest <file_name>\t\t\t Copies Platform Manifest into a file. Sets registration status to completed.\n");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "  \t\t\t\t\t\t\t The user's responsibility is to pass Platform Manifest to registration server.\n");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "-get_add_package <file_name>\t\t\t\t Copies pending Add Package request into a file.\n");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "  \t\t\t\t\t\t\t The user's responsibility is to pass Add Package to registration server\n");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "  \t\t\t\t\t\t\t and set the resulting Platform Certificate using -set_membership_certificates.\n");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "-set_membership_certificates <file_name>\t\t\t Sets the Membership Certificates from file into BIOS, completing Add Package.\n");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "-get_key_blobs <key_blobs_file_name>\t\t\t Copies Package Info Key Blobs into a file. Sets package info status to completed.\n");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "-set_server_info <server_id_file_name> <hex_flags> <URL>\t Sets registration server configurations.\n");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "-get_server_info\t\t\t\t\t\t Prints SGX server information.\n");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "-get_registration_status\t\t\t\t\t Prints and returns registration status.\n");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "-get_last_registration_error_code\t\t\t\t Prints and returns last registration error code.\n");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "-get_sgx_status\t\t\t\t\t\t Prints SGX status.\n");
     management_log_message(MP_REG_LOG_LEVEL_INFO, "\n");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\nIn case of a tool error a negative number will be returned.");
-    management_log_message(MP_REG_LOG_LEVEL_INFO, "\nA positive return value defines as MpResult.");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "In case of a tool error a negative number will be returned.\n");
+    management_log_message(MP_REG_LOG_LEVEL_INFO, "A positive return value is defined as MpResult.\n");
     management_log_message(MP_REG_LOG_LEVEL_INFO, "\n");
     return 0;
 }

@@ -11,6 +11,7 @@ from lib.intelsgx.credential import Credentials
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 from packaging.version import Version
+from collections import OrderedDict
 
 certBegin= '-----BEGIN CERTIFICATE-----'
 certEnd= '-----END CERTIFICATE-----'
@@ -348,14 +349,14 @@ class PCS:
 
         # Verify expected headers
 
-        if not response.headers['Request-ID']:
+        if 'Request-ID' not in response.headers:
             self.error("Response missing Request-ID header")
             return None
-        if not response.headers[PCS.HDR_PCK_Certificate_Issuer_Chain]:
+        if PCS.HDR_PCK_Certificate_Issuer_Chain not in response.headers:
             self.error("Response missing SGX-PCK-Certificate-Issuer-Chain header")
             return None
 
-        if response.headers['Content-Type'] != 'application/x-pem-file':
+        if 'Content-Type' not in response.headers or response.headers['Content-Type'] != 'application/x-pem-file':
             self.error("Content-Type should be application/x-pem-file")
             return None
 
@@ -422,14 +423,14 @@ class PCS:
             return None
 
         # Verify expected headers
-        if not response.headers['Request-ID']:
+        if 'Request-ID' not in response.headers:
             self.error("Response missing Request-ID header")
             return None
-        if not response.headers[PCS.HDR_PCK_Certificate_Issuer_Chain]:
+        if PCS.HDR_PCK_Certificate_Issuer_Chain not in response.headers:
             self.error("Response missing SGX-PCK-Certificate-Issuer-Chain header")
             return None
 
-        if response.headers['Content-Type'] != 'application/json':
+        if 'Content-Type' not in response.headers or response.headers['Content-Type'] != 'application/json':
             self.error("Content-Type should be application/json")
             return None
     
@@ -494,10 +495,10 @@ class PCS:
             return None
 
         # Verify expected headers
-        if not response.headers['Request-ID']:
+        if 'Request-ID' not in response.headers:
             self.error("Response missing Request-ID header")
             return None
-        if not response.headers['SGX-PCK-CRL-Issuer-Chain']:
+        if 'SGX-PCK-CRL-Issuer-Chain' not in response.headers:
             self.error("Response missing SGX-PCK-CRL-Issuer-Chain header")
             return None
 
@@ -549,7 +550,7 @@ class PCS:
             return None
 
         # Verify expected headers
-        if not response.headers['Request-ID']:
+        if 'Request-ID' not in response.headers:
             self.error("Response missing Request-ID header")
             return None
 
@@ -571,14 +572,14 @@ class PCS:
 
         # Verify required headers
 
-        if not response.headers['Request-ID']:
+        if 'Request-ID' not in response.headers:
             self.error("Response missing Request-ID header")
             return None
-        if not response.headers[PCS.HDR_TCB_INFO_ISSUER_CHAIN]:
+        if PCS.HDR_TCB_INFO_ISSUER_CHAIN not in response.headers:
             self.error("Response missing TCB_INFO_ISSUER_CHAIN header")
             return None
 
-        if response.headers['Content-Type'] != 'application/json':
+        if 'Content-Type' not in response.headers or response.headers['Content-Type'] != 'application/json':
             self.error("Content-Type should be application/json")
             return None
 
@@ -601,24 +602,22 @@ class PCS:
 
         # Verify the ECDSA signature. This is calculated over the JSON
         # string of the tcbInfo parameter, which is itself in the
-        # JSON of the output. To do this, extract the substring for
-        # the tcbInfo parameter from the string and discard the rest.
+        # JSON of the output. We need to keep order of fields exactly
+        # as it was in original string, so use OrderedDict.
 
         data= response.content
-        datastr= str(data, 'ascii')
+        datastr= str(data, 'utf-8')
 
-        spos= datastr.find('"tcbInfo":{')
-        if spos == -1:
+        tcbinfo= json.loads(datastr, object_pairs_hook=OrderedDict)
+        if 'tcbInfo' not in tcbinfo:
             self.error("Could not extract tcbInfo from JSON")
             return None
-        spos+= len('"tcbInfo":')
-        epos= datastr.find('},"signature":')
-        msg= bytes(datastr[spos:epos+1], 'ascii')
+
+        msg= json.dumps(tcbinfo['tcbInfo'], separators=(',', ':')).encode('utf-8')
 
         # Now get the signature. Just parse the response as JSON and
         # extract it.
 
-        tcbinfo= json.loads(datastr)
         signature_hex= tcbinfo['signature']
         signature= bytes.fromhex(signature_hex)
         
@@ -652,14 +651,14 @@ class PCS:
 
         # Verify required headers
 
-        if not response.headers['Request-ID']:
+        if 'Request-ID' not in response.headers:
             self.error("Response missing Request-ID header")
             return None
-        if not response.headers[PCS.HDR_Enclave_Identity_Issuer_Chain]:
+        if PCS.HDR_Enclave_Identity_Issuer_Chain not in response.headers:
             self.error("Response missing SGX-Enclave-Identity-Issuer-Chain header")
             return None
 
-        if response.headers['Content-Type'] != 'application/json':
+        if 'Content-Type' not in response.headers or response.headers['Content-Type'] != 'application/json':
             self.error("Content-Type should be application/json")
             return None
 
@@ -682,25 +681,23 @@ class PCS:
 
         # Verify the ECDSA signature. This is calculated over the JSON
         # string of the tcbInfo parameter, which is itself in the
-        # JSON of the output. To do this, extract the substring for
-        # the tcbInfo parameter from the string and discard the rest.
+        # JSON of the output. We need to keep order of fields exactly
+        # as it was in original string, so use OrderedDict.
 
         data= response.content
-        datastr= str(data, 'ascii')
+        datastr= str(data, 'utf-8')
 
-        spos= datastr.find('"enclaveIdentity":{')
-        if spos == -1:
-            self.error("Could not extract enclave identity from JSON")
+        enclave_identity= json.loads(datastr, object_pairs_hook=OrderedDict)
+        if 'enclaveIdentity' not in enclave_identity:
+            self.error("Could not extract enclaveIdentity from JSON")
             return None
-        spos+= len('"enclaveIdentity":')
-        epos= datastr.find('},"signature":')
-        msg= bytes(datastr[spos:epos+1], 'ascii')
+
+        msg= json.dumps(enclave_identity['enclaveIdentity'], separators=(',', ':')).encode('utf-8')
 
         # Now get the signature. Just parse the response as JSON and
         # extract it.
 
-        qeid= json.loads(datastr)
-        signature_hex= qeid['signature']
+        signature_hex= enclave_identity['signature']
         signature= bytes.fromhex(signature_hex)
         
         # Now verify the signature

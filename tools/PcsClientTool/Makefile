@@ -19,3 +19,6 @@ rpm_sgx_pcs_client_pkg:
 clean:
 	./installer/linux/deb/intel-tee-pcs-client-tool/clean.sh
 	./installer/linux/rpm/intel-tee-pcs-client-tool/clean.sh
+
+test:
+	python3 -m venv .venv && . ./.venv/bin/activate && pip install -r requirements.txt && python -m unittest discover && deactivate

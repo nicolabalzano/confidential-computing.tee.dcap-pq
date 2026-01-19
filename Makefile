@@ -51,3 +51,6 @@ clean:
 rebuild:
 	$(MAKE) -f $(CUR_MKFILE) clean
 	$(MAKE) -f $(CUR_MKFILE) all
+
+test:
+	$(MAKE) -C tools/PcsClientTool test

@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -33,6 +34,9 @@
 #define DCAP_TDX_QUOTE_CONFIGFS_PATH_ENV "DCAP_TDX_QUOTE_CONFIGFS_PATH"
 #define QUOTE_CONFIGFS_PATH "/sys/kernel/config/tsm/report"
 #define DEFAULT_DCAP_TDX_QUOTE_CONFIGFS_PATH QUOTE_CONFIGFS_PATH"/com.intel.dcap"
+
+#define DCAP_TDX_RTMR_SYSFS_PATH_ENV "DCAP_TDX_RTMR_SYSFS_PATH"
+#define DEFAULT_DCAP_TDX_RTMR_SYSFS_PATH "/sys/class/misc/tdx_guest/measurements"
 
 // TODO: Should include kernel header, but the header file are included by
 // different package in differnt distro, and installed in different locations.
@@ -70,13 +74,13 @@
 #endif
 
 struct tdx_report_req {
-	__u8 reportdata[TDX_REPORT_DATA_SIZE];
-	__u8 tdreport[TDX_REPORT_SIZE];
+    __u8 reportdata[TDX_REPORT_DATA_SIZE];
+    __u8 tdreport[TDX_REPORT_SIZE];
 };
 
 struct tdx_extend_rtmr_req {
-	__u8 data[TDX_EXTEND_RTMR_DATA_LEN];
-	__u8 index;
+    __u8 data[TDX_EXTEND_RTMR_DATA_LEN];
+    __u8 index;
 };
 
 struct tdx_quote_hdr {
@@ -768,7 +772,7 @@ tdx_attest_error_t tdcall_get_quote_payload(
         TDX_TRACE;
         return TDX_ATTEST_ERROR_UNEXPECTED;
     }
-    
+
     *p_payload_body_size = body_size;
 #ifdef DEBUG
     fprintf(stdout, "\nGet %u bytes response from tdvmcall", body_size);
@@ -919,12 +923,77 @@ tdx_attest_error_t tdx_att_get_supported_att_key_ids(
     return TDX_ATTEST_SUCCESS;
 }
 
+static int sysfs_extend_rtmr(uint64_t rtmr, const uint8_t *data)
+{
+    const char *mrpath;
+    char mrfname[MAX_PATH];
+    ssize_t rc;
+    int fd;
+
+    mrpath = secure_getenv(DCAP_TDX_RTMR_SYSFS_PATH_ENV);
+    if (mrpath == NULL)
+        mrpath = DEFAULT_DCAP_TDX_RTMR_SYSFS_PATH;
+
+    rc = snprintf(mrfname, sizeof(mrfname), "%s/rtmr%" PRIu64 ":sha384", mrpath, rtmr);
+    if (rc >= (ssize_t)sizeof(mrfname)) {
+        syslog(LOG_ERR, "libtdx_attest: env '%s' is too long.", DCAP_TDX_RTMR_SYSFS_PATH_ENV);
+        return -ENAMETOOLONG;
+    }
+
+    fd = open(mrfname, O_WRONLY);
+    if (fd < 0) {
+        int err = -errno;
+        syslog(LOG_ERR, "libtdx_attest: failed to open RTMR file %s.", mrfname);
+        return err;
+    }
+
+    rc = write(fd, data, TDX_EXTEND_RTMR_DATA_LEN);
+    close(fd);
+
+    if (rc != TDX_EXTEND_RTMR_DATA_LEN) {
+        int err = rc < 0 ? -errno : -EIO;
+        syslog(LOG_ERR, "libtdx_attest: failed to write to RTMR file %s.", mrfname);
+        return err;
+    }
+
+    return 0;
+}
+
+static int ioctl_extend_rtmr(uint64_t rtmr, const uint8_t *data)
+{
+    int err = -EOPNOTSUPP;
+
+#ifdef TDX_CMD_EXTEND_RTMR
+    struct tdx_extend_rtmr_req req;
+    int devfd;
+
+    devfd = open(TDX_ATTEST_DEV_PATH, O_RDWR | O_SYNC);
+    if (devfd < 0) {
+        err = -errno;
+        TDX_TRACE;
+        return err;
+    }
+
+    memcpy(req.data, data, TDX_EXTEND_RTMR_DATA_LEN);
+    req.index = (uint8_t)rtmr;
+
+    err = ioctl(devfd, TDX_CMD_EXTEND_RTMR, &req);
+    close(devfd);
+
+    if (err < 0) {
+        err = -errno;
+        TDX_TRACE;
+    }
+#endif
+
+    return err;
+}
+
 tdx_attest_error_t tdx_att_extend(
     const tdx_rtmr_event_t *p_rtmr_event)
 {
-#ifdef TDX_CMD_EXTEND_RTMR
-    int devfd = -1;
-    struct tdx_extend_rtmr_req req;
+    int err;
+
     if (!p_rtmr_event || p_rtmr_event->version != 1) {
         return TDX_ATTEST_ERROR_INVALID_PARAMETER;
     }
@@ -935,30 +1004,25 @@ tdx_attest_error_t tdx_att_extend(
         return TDX_ATTEST_ERROR_INVALID_PARAMETER;
     }
 
-    devfd = open(TDX_ATTEST_DEV_PATH, O_RDWR | O_SYNC);
-    if (-1 == devfd) {
-        TDX_TRACE;
-        return TDX_ATTEST_ERROR_DEVICE_FAILURE;
-    }
-
     static_assert(TDX_EXTEND_RTMR_DATA_LEN == sizeof(p_rtmr_event->extend_data),
                   "rtmr extend size mismatch!");
-    req.index = (uint8_t)p_rtmr_event->rtmr_index;
-    memcpy(req.data, p_rtmr_event->extend_data, TDX_EXTEND_RTMR_DATA_LEN);
-    if (-1 == ioctl(devfd, TDX_CMD_EXTEND_RTMR, &req)) {
-        TDX_TRACE;
-        close(devfd);
-        if (EINVAL == errno) {
-            return TDX_ATTEST_ERROR_INVALID_RTMR_INDEX;
-        }
+
+    err = sysfs_extend_rtmr(p_rtmr_event->rtmr_index, p_rtmr_event->extend_data);
+    if (err == -ENOENT)
+        err = ioctl_extend_rtmr(p_rtmr_event->rtmr_index, p_rtmr_event->extend_data);
+
+    switch (err) {
+    case 0:
+        return TDX_ATTEST_SUCCESS;
+    case -ENOENT:
+        return TDX_ATTEST_ERROR_DEVICE_FAILURE;
+    case -EINVAL:
+        return TDX_ATTEST_ERROR_INVALID_RTMR_INDEX;
+    case -EOPNOTSUPP:
+        return TDX_ATTEST_ERROR_NOT_SUPPORTED;
+    default:
         return TDX_ATTEST_ERROR_EXTEND_FAILURE;
     }
-    close(devfd);
-    return TDX_ATTEST_SUCCESS;
-#else
-    (void)p_rtmr_event;
-    return TDX_ATTEST_ERROR_NOT_SUPPORTED;
-#endif
 }
 
 #else

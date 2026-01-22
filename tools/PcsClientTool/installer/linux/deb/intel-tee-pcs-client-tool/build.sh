@@ -70,10 +70,12 @@ get_os_code() {
 update_version() {
     pushd ${SCRIPT_DIR}/${DEB_BUILD_FOLDER}
     INS_VERSION=$(echo $(dpkg-parsechangelog |grep "Version" | cut -d: -f2))
+    INS_DATE=$(dpkg-parsechangelog | awk '/^Date:/ {print substr($0, index($0,$2)) ; exit}')
     DEB_VERSION=$(echo $INS_VERSION | cut -d- -f2)
 
     FULL_VERSION=${DCAP_VERSION}-$(get_os_code)${DEB_VERSION}
-    sed -i "s/${INS_VERSION}/${FULL_VERSION}/" debian/changelog
+    sed -i "0,/${INS_VERSION}/s//${FULL_VERSION}/" debian/changelog
+    sed -i "0,/${INS_DATE}/s//$(date -u +"%a, %d %b %Y %H:%M:%S +0000")/" debian/changelog
     sed -i "s/@dep_version@/${FULL_VERSION}/g" debian/control
     popd
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2011-2025 Intel Corporation
+ * Copyright(c) 2011-2026 Intel Corporation
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
@@ -105,6 +105,8 @@ static const unsigned HEADER_SIZE = 4;
 static const size_t REQ_BUF_SIZE = 4 * 4 * 1024; // 4 pages
 static const size_t QUOTE_BUF_SIZE = 8 * 1024; //8K
 static const size_t QUOTE_MIN_SIZE = 1020;
+static const unsigned MAX_PORT_NUMBER = 0xFFFF; // accepted port range 0..65535 (0xFFFF)
+static const unsigned WRONG_PORT_NUMBER = MAX_PORT_NUMBER + 1;
 
 static const tdx_uuid_t g_intel_tdqe_uuid = {TDX_SGX_ECDSA_ATTESTATION_ID};
 
@@ -115,12 +117,12 @@ static unsigned int get_vsock_port(void)
     char *p = NULL;
     size_t line_len = 0;
     long long_num = 0;
-    unsigned int port = 0;
+    unsigned int port = WRONG_PORT_NUMBER;
 
     p_config_fd = fopen(CFG_FILE_PATH, "r");
     if (NULL == p_config_fd) {
         TDX_TRACE;
-        return 0;
+        return port;
     }
     while(-1 != getline(&p_line, &line_len, p_config_fd)) {
         char temp[11] = {0};
@@ -142,19 +144,19 @@ static unsigned int get_vsock_port(void)
             long_num = strtol(temp, &p, 10);
             if (p == temp) {
                 TDX_TRACE;
-                port = 0;
+                port = WRONG_PORT_NUMBER;
                 break;
             }
 
             // make sure that no range error occurred
-            if (errno == ERANGE || long_num > UINT_MAX) {
+            if (errno == ERANGE || long_num > MAX_PORT_NUMBER) {
                 TDX_TRACE;
-                port = 0;
+                port = WRONG_PORT_NUMBER;
                 break;
             }
 
-            // range is ok, so we can convert to int
-            port = (unsigned int)long_num & 0xFFFFFFFF;
+            // range is ok, so we can convert to short
+            port = (unsigned int)long_num & 0xFFFF;
 #ifdef DEBUG
             fprintf(stdout, "\nGet the vsock port number [%u]\n", port);
 #endif
@@ -657,7 +659,7 @@ static tdx_attest_error_t vsock_get_quote_payload(
     uint32_t body_size = 0;
 
     unsigned int vsock_port = get_vsock_port();
-    if (!vsock_port) {
+    if (vsock_port == WRONG_PORT_NUMBER) {
         syslog(LOG_INFO, "libtdx_attest: cannot parse sock port - use configfs mode.");
         return TDX_ATTEST_ERROR_NOT_SUPPORTED;
     }

@@ -17,7 +17,7 @@ ifeq ($(wildcard $(TOP_DIR)/buildenv.mk),)
 	ifdef DEBUG
 		COMMON_FLAGS += -O0 -ggdb -DDEBUG -UNDEBUG -DSE_DEBUG_LEVEL=SE_TRACE_DEBUG -DDEBUG_MODE=1
 	else
-		COMMON_FLAGS += -O2 -UDEBUG -DNDEBUG -D_FORTIFY_SOURCE=2
+		COMMON_FLAGS += -O2 -g -UDEBUG -DNDEBUG -D_FORTIFY_SOURCE=2
 	endif
 
 	CXXFLAGS = $(COMMON_FLAGS) -Wnon-virtual-dtor -std=c++14
@@ -41,7 +41,7 @@ $(LIBQGS_MSG): $(OBJS)
 	$(AR) rcsD $@ $^
 
 $(OBJS): %.o:%.cpp
-	$(CXX) -c $(CXXFLAGS) -g -MMD -Werror -fPIC -Wno-attributes $(INCLUDES) $< -o $@
+	$(CXX) -c $(CXXFLAGS) -MMD -Werror -fPIC -Wno-attributes $(INCLUDES) $< -o $@
 
 .PHONY: clean
 clean:

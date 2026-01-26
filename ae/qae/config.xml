@@ -1,0 +1,15 @@
+<!-- Please refer to User's Guide for the explanation of each field -->
+<EnclaveConfiguration>
+  <IntelSigned>1</IntelSigned>
+  <ProdID>3</ProdID>
+  <ISVSVN>0xC</ISVSVN>
+  <StackMaxSize>0xA000</StackMaxSize>
+  <StackMinSize>0xA000</StackMinSize>
+  <HeapMaxSize>0x300000</HeapMaxSize>
+  <HeapMinSize>0x300000</HeapMinSize>
+  <TCSNum>1</TCSNum>
+  <TCSPolicy>1</TCSPolicy>
+  <DisableDebug>1</DisableDebug>
+  <MiscSelect>0</MiscSelect>
+  <MiscMask>0xFFFFFFFF</MiscMask>
+</EnclaveConfiguration>

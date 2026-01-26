@@ -80,7 +80,7 @@ deb_sgx_ae_qe3_pkg: $(CHECK_OPT)
 deb_sgx_ae_id_enclave_pkg: $(CHECK_OPT)
 	./installer/linux/deb/libsgx-ae-id-enclave/build.sh
 
-.PHONY: deb_sgx_ae_qve_pkg qve_wrapper
+.PHONY: deb_sgx_ae_qve_pkg
 deb_sgx_ae_qve_pkg: $(CHECK_OPT)
 	./installer/linux/deb/libsgx-ae-qve/build.sh
 
@@ -135,23 +135,21 @@ deb_tee_appraisal_tool_pkg:
 	$(MAKE) -C ../QuoteVerification tee_appraisal_tool
 	./installer/linux/deb/tee-appraisal-tool/build.sh
 
+.PHONY: deb_sgx_ae_qae_pkg
+deb_sgx_ae_qae_pkg: $(CHECK_OPT)
+	./installer/linux/deb/libsgx-ae-qae/build.sh
+
 .PHONY: deb_pkg
 deb_pkg: deb_sgx_pce_logic_pkg deb_sgx_qe3_logic_pkg deb_sgx_dcap_ql_pkg deb_sgx_dcap_quote_verify_pkg \
          deb_sgx_dcap_default_qpl_pkg deb_sgx_dcap_pccs_pkg deb_sgx_ae_qe3_pkg deb_sgx_ae_tdqe_pkg deb_sgx_ae_id_enclave_pkg \
          deb_sgx_ae_qve_pkg deb_sgx_tdx_logic_pkg deb_sgx_tdx_qgs_pkg deb_sgx_tdx_attest_pkg \
          deb_sgx_pck_id_retrieval_tool_pkg deb_sgx_ra_service_pkg deb_tee_appraisal_tool_pkg \
-         deb_pccs_admin_tool_pkg
+         deb_pccs_admin_tool_pkg deb_sgx_ae_qae_pkg
 	@$(RM) ./installer/linux/deb/*.deb ./installer/linux/deb/*.ddeb
 	cp `find ./installer/linux/deb/ -name "*.deb" -o -name "*.ddeb"` ./installer/linux/deb/
 	cp `find ../tools/PCKRetrievalTool/installer/deb/ -name "*.deb" -o -name "*.ddeb"` ./installer/linux/deb/
 	cp `find ../tools/SGXPlatformRegistration/build/release/installer/ -name "*.deb" -o -name "*.ddeb"` ./installer/linux/deb/
 	cp `find ./pccs/build_infrastructure/installer/linux/deb/ -name "*.deb" -o -name "*.ddeb"` ./installer/linux/deb/
-
-.PHONY: premium_deb_pkg
-premium_deb_pkg: deb_sgx_dcap_pccs_pkg deb_sgx_ae_qae_pkg
-	@$(MKDIR) ./installer/linux/deb/premium_pkg
-	@$(RM) ./installer/linux/deb/premium_pkg/*
-	cp `find ./installer/linux/deb/ -name "*.deb" -o -name "*.ddeb"` ./installer/linux/deb/premium_pkg
 
 .PHONY: rpm_sgx_dcap_ql_pkg
 rpm_sgx_dcap_ql_pkg: $(CHECK_OPT) pce_logic qe3_logic qve_wrapper
@@ -223,22 +221,20 @@ rpm_tee_appraisal_tool_pkg:
 	$(MAKE) -C ../QuoteVerification tee_appraisal_tool
 	./installer/linux/rpm/tee-appraisal-tool/build.sh
 
+.PHONY: rpm_sgx_ae_qae_pkg
+rpm_sgx_ae_qae_pkg: $(CHECK_OPT)
+	./installer/linux/rpm/libsgx-ae-qae/build.sh
+
 .PHONY: rpm_pkg
 rpm_pkg: rpm_sgx_dcap_ql_pkg rpm_sgx_dcap_default_qpl_pkg rpm_sgx_dcap_pccs_pkg rpm_sgx_ae_qe3_pkg rpm_sgx_ae_tdqe_pkg \
          rpm_sgx_ae_id_enclave_pkg rpm_sgx_ae_qve_pkg rpm_sgx_tdx_logic_pkg rpm_sgx_tdx_qgs_pkg rpm_sgx_tdx_attest_pkg \
          rpm_sgx_dcap_quote_verify_pkg rpm_sgx_pce_logic_pkg rpm_sgx_qe3_logic_pkg rpm_sgx_pck_id_retrieval_tool_pkg \
-         rpm_sgx_ra_service_pkg rpm_tee_appraisal_tool_pkg rpm_pccs_admin_tool_pkg
+         rpm_sgx_ra_service_pkg rpm_tee_appraisal_tool_pkg rpm_pccs_admin_tool_pkg rpm_sgx_ae_qae_pkg
 	@$(RM) ./installer/linux/rpm/*.rpm
 	cp `find ./installer/linux/rpm/ -name "*.rpm"` ./installer/linux/rpm/
 	cp `find ../tools/PCKRetrievalTool/installer/rpm/ -name "*.rpm"` ./installer/linux/rpm/
 	cp `find ../tools/SGXPlatformRegistration/build/release/installer/ -name "*.rpm"`  ./installer/linux/rpm/
 	cp `find ./pccs/build_infrastructure/installer/linux/rpm/ -name "*.rpm"`  ./installer/linux/rpm/
-
-.PHONY: premium_rpm_pkg
-premium_rpm_pkg: rpm_sgx_dcap_pccs_pkg rpm_sgx_ae_qae_pkg
-	@$(MKDIR) ./installer/linux/rpm/premium_pkg
-	@$(RM) ./installer/linux/rpm/premium_pkg/*
-	cp `find ./installer/linux/rpm/ -name "*.rpm"` ./installer/linux/rpm/premium_pkg
 
 clean:
 	$(MAKE) -C pce_wrapper/linux clean
@@ -272,6 +268,7 @@ clean:
 	./installer/linux/deb/libsgx-dcap-default-qpl/clean.sh
 	../tools/PCKRetrievalTool/installer/deb/sgx-pck-id-retrieval-tool/clean.sh
 	./installer/linux/deb/tee-appraisal-tool/clean.sh
+	./installer/linux/deb/libsgx-ae-qae/clean.sh
 	./installer/linux/rpm/libsgx-dcap-ql/clean.sh
 	./installer/linux/rpm/libsgx-ae-qe3/clean.sh
 	./installer/linux/rpm/libsgx-ae-tdqe/clean.sh
@@ -286,6 +283,7 @@ clean:
 	./installer/linux/rpm/libsgx-dcap-default-qpl/clean.sh
 	../tools/PCKRetrievalTool/installer/rpm/sgx-pck-id-retrieval-tool/clean.sh
 	./installer/linux/rpm/tee-appraisal-tool/clean.sh
+	./installer/linux/rpm/libsgx-ae-qae/clean.sh
 
 rebuild:
 	$(MAKE) -f $(CUR_MKFILE) clean

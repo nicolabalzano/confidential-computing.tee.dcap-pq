@@ -1,0 +1,10 @@
+Source: libsgx-ae-qae
+Section: libs
+Priority: optional
+Maintainer: Intel Confidential Computing Team <confidential.computing@intel.com>
+Build-Depends: debhelper (>= 8.0.0)
+Standards-Version: 3.9.4
+
+Package: libsgx-ae-qae
+Architecture: amd64
+Description: Intel(R) Software Guard Extensions QAE

@@ -1,5 +1,5 @@
 @REM
-@REM Copyright(c) 2011-2025 Intel Corporation
+@REM Copyright(c) 2011-2026 Intel Corporation
 @REM
 @REM SPDX-License-Identifier: BSD-3-Clause
 @REM
@@ -7,7 +7,7 @@
 @echo off 
 
 set svn_ver=%1%
-set rel_dir_name=PCKIDRetrievalTool_v1.24.100.2
+set rel_dir_name=PCKIDRetrievalTool_v1.25.100.1
 set TOOLSFOLDER=.\..\..\..\installer_tools\Tools\standalone_build_se\sign
 set SIGNTOOL="%TOOLSFOLDER%\SignFile.exe"
 set flag=0

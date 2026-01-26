@@ -1,5 +1,5 @@
 @REM
-@REM Copyright(c) 2011-2025 Intel Corporation
+@REM Copyright(c) 2011-2026 Intel Corporation
 @REM
 @REM SPDX-License-Identifier: BSD-3-Clause
 @REM
@@ -11,7 +11,7 @@ set QGFOLDER="..\..\"
 set QVFOLDER="%TOPFOLDER%\QuoteVerification"
 set DEBUGFILEFOLDER="..\..\..\x64\Debug\"
 set RELEASEFILEFOLDER="..\..\..\x64\Release\"
-set PACKAGETNAME=DCAP_Components.1.24.100.2
+set PACKAGETNAME=DCAP_Components.1.25.100.1
 set pwd=%~dp0DCAP_Components
 
 pushd "%~dp0"

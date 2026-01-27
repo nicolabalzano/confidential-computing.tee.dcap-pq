@@ -1,5 +1,5 @@
 #
-# Copyright(c) 2011-2025 Intel Corporation
+# Copyright(c) 2011-2026 Intel Corporation
 #
 # SPDX-License-Identifier: BSD-3-Clause
 #
@@ -11,7 +11,7 @@ Version:        @version@
 Release:        1%{?dist}
 Summary:        Intel(R) Software Guard Extensions Data Center Attestation Primitives
 Group:          Development/Libraries
-Recommends:     libsgx-ae-qve >= %{version}-%{release} libsgx-urts >= 2.27
+Recommends:     libsgx-ae-qve >= %{version}-%{release} libsgx-urts >= 2.28
 
 License:        BSD License
 URL:            https://github.com/intel/SGXDataCenterAttestationPrimitives
@@ -23,7 +23,7 @@ Intel(R) Software Guard Extensions Data Center Attestation Primitives
 %package devel
 Summary:        Intel(R) Software Guard Extensions Data Center Attestation Primitives for Developers
 Group:          Development/Libraries
-Requires:       %{name} = %{version}-%{release} libsgx-headers >= 2.27
+Requires:       %{name} = %{version}-%{release} libsgx-headers >= 2.28
 
 %description devel
 Intel(R) Software Guard Extensions Data Center Attestation Primitives for Developers

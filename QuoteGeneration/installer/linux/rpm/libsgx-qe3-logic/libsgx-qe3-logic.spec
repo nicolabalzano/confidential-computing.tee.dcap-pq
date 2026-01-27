@@ -1,5 +1,5 @@
 #
-# Copyright(c) 2011-2025 Intel Corporation
+# Copyright(c) 2011-2026 Intel Corporation
 #
 # SPDX-License-Identifier: BSD-3-Clause
 #
@@ -11,7 +11,7 @@ Version:        @version@
 Release:        1%{?dist}
 Summary:        Intel(R) Software Guard Extensions QE3 logic
 Group:          Development/Libraries
-Requires:       libsgx-urts >= 2.27 libsgx-ae-qe3 >= %{version}-%{release} libsgx-ae-id-enclave >= %{version}-%{release}
+Requires:       libsgx-urts >= 2.28 libsgx-ae-qe3 >= %{version}-%{release} libsgx-ae-id-enclave >= %{version}-%{release}
 
 License:        BSD License
 URL:            https://github.com/intel/SGXDataCenterAttestationPrimitives

@@ -68,7 +68,7 @@ QVL_VERIFY_LIB_NAME_Static := $(QVL_VERIFY_LIB_NAME).a
 
 QAL_APPRAISAL_DIR := $(DCAP_QV_DIR)/appraisal/qal
 QAL_APPRAISAL_CPP_SRCS :=$(wildcard $(QAL_APPRAISAL_DIR)/*.cpp)
-QAL_CPP_OBJS := $(QAL_APPRAISAL_CPP_SRCS:.cpp=.o) $(QAL_APPRAISAL_DIR)/file_util.o $(QAL_APPRAISAL_DIR)/format_util.o
+QAL_CPP_OBJS := $(QAL_APPRAISAL_CPP_SRCS:.cpp=.o) $(QAL_APPRAISAL_DIR)/format_util.o
 QAL_C_OBJS := $(QAL_APPRAISAL_DIR)/qae_u.o
 QAL_OBJS := $(sort $(QAL_CPP_OBJS) $(QAL_C_OBJS))
 QAL_Static_Lib_Name := libdcap_qal.a
@@ -92,7 +92,6 @@ install_lib: $(QVL_VERIFY_LIB_NAME_Dynamic) | $(BUILD_DIR)
 	@$(CP) $(QVL_VERIFY_LIB_NAME_Dynamic) $|/$(QVL_VERIFY_LIB_NAME_Dynamic_Full)
 	@$(LN) $(QVL_VERIFY_LIB_NAME_Dynamic_Full) $|/$(QVL_VERIFY_LIB_NAME_Dynamic_Major)
 	@$(LN) $(QVL_VERIFY_LIB_NAME_Dynamic_Major) $|/$(QVL_VERIFY_LIB_NAME_Dynamic)
-	$(CP) $(PREBUILD_PATH)/opa_bin/policy.wasm $|/tee_appraisal_policy.wasm
 
 ifeq ($(GEN_STATIC),1)
 	@$(MAKE) $(QVL_VERIFY_LIB_NAME_Static)
@@ -180,7 +179,7 @@ uninstall:
 
 clean:
 	@$(RM) *_u.* $(QVL_VERIFY_CPP_OBJS) $(QVL_VERIFY_CPP_OBJS_STATIC) $(QVL_VERIFY_C_OBJS) $(QVL_VERIFY_LIB_NAME_Dynamic) $(QVL_VERIFY_LIB_NAME_Static)
-	@$(RM) $(addprefix $(BUILD_DIR)/,$(QVL_VERIFY_LIB_NAME_Dynamic) $(QVL_VERIFY_LIB_NAME_Dynamic_Full) $(QVL_VERIFY_LIB_NAME_Dynamic_Major) tee_appraisal_policy.wasm)
+	@$(RM) $(addprefix $(BUILD_DIR)/,$(QVL_VERIFY_LIB_NAME_Dynamic) $(QVL_VERIFY_LIB_NAME_Dynamic_Full) $(QVL_VERIFY_LIB_NAME_Dynamic_Major))
 	@$(RM) $(QVL_LIB_OBJS) $(QVL_PARSER_OBJS) $(QVL_LIB_COMMON_OBJS)
 	@$(RM) $(QVL_LIB_NAME) $(QVL_PARSER_NAME)
 	@$(RM) *.1

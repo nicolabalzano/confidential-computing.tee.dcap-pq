@@ -20,7 +20,7 @@ public:
     OPAEvaluateEngine();
     ~OPAEvaluateEngine();
 
-    quote3_error_t prepare_wasm(uint8_t *wasm_buf, size_t wasm_size, uint32_t stack_size = DEFAULT_STACK_SIZE, uint32_t heap_size = DEFAULT_HEAP_SIZE);
+    quote3_error_t prepare_wasm(uint32_t stack_size = DEFAULT_STACK_SIZE, uint32_t heap_size = DEFAULT_HEAP_SIZE);
 
     quote3_error_t start_eval(const uint8_t *input_json_buf, uint32_t json_size, time_t appraisal_check_date,
                               uint32_t *p_appraisal_result_token_buffer_size, uint8_t **p_appraisal_result_token);

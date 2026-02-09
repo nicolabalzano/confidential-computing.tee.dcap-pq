@@ -47,7 +47,7 @@ endif
 
 QAL_Cpp_Files := $(wildcard *.cpp)
 QAL_CXX_Obj_Files := $(QAL_Cpp_Files:.cpp=.o)
-QAL_CXX_Common_Objs := file_util.o ec_key.o format_util.o
+QAL_CXX_Common_Objs := ec_key.o format_util.o
 
 QAL_C_Common_Objs := se_thread.o se_trace.o
 QAL_C_Obj_Files := $(QAL_C_Common_Objs) qae_u.o
@@ -86,8 +86,8 @@ config.o: %.o:../../dcap_quoteverify/linux/%.cpp
 sgx_urts_wrapper.o: %.o:../../dcap_quoteverify/sgx_urts_wrapper.cpp
 	$(CXX) $(QAL_Cpp_Flags) -c $< -o $@
 
-qae_u.h: $(SGX_EDGER8R) ../qae/qae.edl
-	$(SGX_EDGER8R) --untrusted ../qae/qae.edl $(Enclave_Edl_Search_Path)
+qae_u.h: $(SGX_EDGER8R) ../../../ae/qae/qae.edl
+	$(SGX_EDGER8R) --untrusted ../../../ae/qae/qae.edl $(Enclave_Edl_Search_Path)
 	@echo "GEN  =>  $@"
 
 qae_u.c: qae_u.h

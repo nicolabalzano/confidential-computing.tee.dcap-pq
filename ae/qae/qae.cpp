@@ -176,9 +176,7 @@ static quote3_error_t generate_qae_report_for_appraisal(const char *p_verificati
     return SGX_QL_SUCCESS;
 }
 
-quote3_error_t qae_appraise_quote_result(uint8_t *wasm_buf,
-                                         size_t wasm_size,
-                                         const char *p_verification_result_token,
+quote3_error_t qae_appraise_quote_result(const char *p_verification_result_token,
                                          uint8_t **p_qaps,
                                          uint8_t qaps_count,
                                          time_t appraisal_check_date,
@@ -186,10 +184,6 @@ quote3_error_t qae_appraise_quote_result(uint8_t *wasm_buf,
                                          uint32_t *p_appraisal_result_token_buffer_size,
                                          uint8_t **p_appraisal_result_token)
 {
-    if (wasm_buf == NULL || wasm_size == 0 || !sgx_is_within_enclave(wasm_buf, wasm_size))
-    {
-        return SGX_QL_ERROR_INVALID_PARAMETER;
-    }
     if (p_verification_result_token == NULL || !sgx_is_within_enclave(p_verification_result_token, strlen(p_verification_result_token)))
     {
         return SGX_QL_ERROR_INVALID_PARAMETER;
@@ -275,7 +269,7 @@ quote3_error_t qae_appraise_quote_result(uint8_t *wasm_buf,
             break;
         }
         OPAEvaluateEngine instance;
-        ret = instance.prepare_wasm(wasm_buf, wasm_size);
+        ret = instance.prepare_wasm();
         if (ret != SGX_QL_SUCCESS)
         {
             break;

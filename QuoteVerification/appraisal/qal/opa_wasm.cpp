@@ -1,29 +1,8 @@
-/**
-* Copyright (c) 2011-2025, Intel Corporation
-*
-* Redistribution and use in source and binary forms, with or without
-* modification, are permitted provided that the following conditions are met:
-*
-*    * Redistributions of source code must retain the above copyright notice,
-*      this list of conditions and the following disclaimer.
-*    * Redistributions in binary form must reproduce the above copyright
-*      notice, this list of conditions and the following disclaimer in the
-*      documentation and/or other materials provided with the distribution.
-*    * Neither the name of Intel Corporation nor the names of its contributors
-*      may be used to endorse or promote products derived from this software
-*      without specific prior written permission.
-*
-* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-* AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-* IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-* DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE
-* FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-* DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-* SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-* CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-* OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-* OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
+/*
+ * Copyright(c) 2011-2026 Intel Corporation
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
 
 #include "wasm_export.h"
 #include "sgx_dcap_qal.h"
@@ -38,6 +17,7 @@
 #include "qal_common.h"
 #include "opa_wasm.h"
 #include "ec_key.h"
+#include "wasm_buf.h"
 
 std::map<int, std::string> g_builtins;
 std::map<std::string, void *> g_builtin_func_map;
@@ -45,8 +25,6 @@ std::map<std::string, void *> g_builtin_func_map;
 static bool g_builtin_prepared = false;
 static pthread_mutex_t g_wasm_mutex;
 static int g_wasm_init = 0;
-static uint8_t *g_wasm_buf = NULL;
-static size_t g_wasm_size = 0;
 static wasm_module_t g_wasm_module = NULL;
 
 #define CHECK_OPA_RET(val) if(val == 0) {return SGX_QL_ERROR_UNEXPECTED;}
@@ -72,13 +50,9 @@ static void __attribute__((destructor)) _sgx_qal_qae_fini()
         wasm_runtime_unload(g_wasm_module);
         wasm_runtime_destroy();
     }
-    if (g_wasm_buf)
-    {
-        free(g_wasm_buf);
-    }
 }
 
-static int init_wasm_runtime_once(uint8_t *wasm_buf, size_t wasm_size)
+static int init_wasm_runtime_once()
 {
     if (g_wasm_init != 0)
     {
@@ -110,24 +84,12 @@ static int init_wasm_runtime_once(uint8_t *wasm_buf, size_t wasm_size)
                     break;
                 }
 
-                g_wasm_buf = (uint8_t *)malloc(wasm_size);
-                if (g_wasm_buf == NULL)
-                {
-                    wasm_runtime_destroy();
-                    g_wasm_init = -1;
-                    break;
-                }
-                memcpy(g_wasm_buf, wasm_buf, wasm_size);
-                g_wasm_size = wasm_size;
-
                 // Load WASM module from the WASM file buf
                 if (!(g_wasm_module = wasm_runtime_load(g_wasm_buf, (uint32_t)g_wasm_size,
                                                         error_buf, sizeof(error_buf))))
                 {
                     se_trace(SE_TRACE_ERROR, "Read WASM file failed.\n");
                     wasm_runtime_destroy();
-                    free(g_wasm_buf);
-                    g_wasm_buf = NULL;
                     g_wasm_init = -1;
                     break;
                 }
@@ -212,14 +174,14 @@ OPAEvaluateEngine::~OPAEvaluateEngine()
     wasm_runtime_destroy_thread_env();
 }
 
-quote3_error_t OPAEvaluateEngine::prepare_wasm(uint8_t *wasm_buf, size_t wasm_size, uint32_t stack_size, uint32_t heap_size)
+quote3_error_t OPAEvaluateEngine::prepare_wasm(uint32_t stack_size, uint32_t heap_size)
 {
     char error_buf[128] = {0};
     // Set the heap/stack size
     m_stack_size = stack_size;
     m_heap_size = heap_size;
 
-    if (init_wasm_runtime_once(wasm_buf, wasm_size) != 1)
+    if (init_wasm_runtime_once() != 1)
     {
         se_trace(SE_TRACE_ERROR, "Failed to initialize the wasm global environment.\n");
         return SGX_QL_ERROR_UNEXPECTED;

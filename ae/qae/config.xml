@@ -2,7 +2,7 @@
 <EnclaveConfiguration>
   <IntelSigned>1</IntelSigned>
   <ProdID>3</ProdID>
-  <ISVSVN>0xC</ISVSVN>
+  <ISVSVN>0xD</ISVSVN>
   <StackMaxSize>0xA000</StackMaxSize>
   <StackMinSize>0xA000</StackMinSize>
   <HeapMaxSize>0x300000</HeapMaxSize>

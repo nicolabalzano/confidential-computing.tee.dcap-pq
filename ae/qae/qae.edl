@@ -15,7 +15,7 @@ enclave {
 
     trusted {
         /* define ECALLs here. */
-        public quote3_error_t qae_appraise_quote_result([in, size=wasm_size]uint8_t *wasm_buf, size_t wasm_size,
+        public quote3_error_t qae_appraise_quote_result(
                                                     [in, string]const char *p_verification_result_token,
                                                     [in, count=qaps_count]uint8_t **p_qaps, uint8_t qaps_count,
                                                     time_t appraisal_check_date,

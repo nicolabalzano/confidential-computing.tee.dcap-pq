@@ -227,8 +227,6 @@ void unload_enclave(sgx_enclave_id_t eid, bool force)
 }
 
 quote3_error_t ecall_appraise_quote_result(sgx_enclave_id_t eid,
-                                           uint8_t *wasm_buf,
-                                           size_t wasm_size,
                                            const uint8_t *p_verification_result_token,
                                            uint8_t **p_qaps,
                                            uint8_t qaps_count,
@@ -248,8 +246,6 @@ quote3_error_t ecall_appraise_quote_result(sgx_enclave_id_t eid,
     std::lock_guard<std::mutex> lock(s_qae_info.m_qae_mutex);
     sgx_status_t ret = qae_appraise_quote_result(s_qae_info.m_qae_eid,
                                                  &retval,
-                                                 wasm_buf,
-                                                 wasm_size,
                                                  reinterpret_cast<const char *>(p_verification_result_token),
                                                  p_qaps,
                                                  qaps_count,

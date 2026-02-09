@@ -13,44 +13,11 @@
 #include "se_trace.h"
 #include "qal_json.h"
 #include "qae_wrapper.h"
-#include "file_util.h"
 #include "sgx_dcap_pcs_com.h"
 #include "qal_auth.h"
 
+
 #define INVALID_AUTH_STATUS -2
-
-static bool s_wasm_buf_flag = false;
-static uint8_t *s_wasm_buf = NULL;
-static size_t s_wasm_size = 0;
-static pthread_once_t s_wasm_buf_initialized = PTHREAD_ONCE_INIT;
-
-#ifdef USE_LOCAL_WASM
-#define WASM_FILE "./policy.wasm"
-#else
-#define WASM_FILE "/usr/share/sgx/tee_appraisal_policy.wasm"
-#endif
-
-void __attribute__((destructor)) qal_destructor()
-{
-    if (s_wasm_buf)
-    {
-        free(s_wasm_buf);
-        s_wasm_buf = NULL;
-    }
-}
-
-static void prepare_wasm_buf()
-{
-    s_wasm_buf = read_file_to_buffer(WASM_FILE, &s_wasm_size);
-    if (s_wasm_buf == NULL)
-    {
-        se_trace(SE_TRACE_ERROR, "Read WASM file failed.\n");
-    }
-    else
-    {
-        s_wasm_buf_flag = true;
-    }
-}
 
 quote3_error_t tee_appraise_verification_token(
     const uint8_t *p_verification_result_token,
@@ -86,11 +53,6 @@ quote3_error_t tee_appraise_verification_token(
         }
     }
 
-    if (pthread_once(&s_wasm_buf_initialized, prepare_wasm_buf) != 0 || s_wasm_buf_flag == false)
-    {
-        return SGX_QL_ERROR_UNEXPECTED;
-    }
-
     if (p_qae_report_info)
     {
         // trusted qae
@@ -101,7 +63,7 @@ quote3_error_t tee_appraise_verification_token(
             return ret;
         }
 
-        ret = ecall_appraise_quote_result(qae_id, s_wasm_buf, s_wasm_size, p_verification_result_token, p_qaps, qaps_count, appraisal_check_date,
+        ret = ecall_appraise_quote_result(qae_id, p_verification_result_token, p_qaps, qaps_count, appraisal_check_date,
                                           p_qae_report_info, p_appraisal_result_token_buffer_size, p_appraisal_result_token);
         unload_enclave(qae_id);
         return ret;
@@ -123,7 +85,7 @@ quote3_error_t tee_appraise_verification_token(
         }
 
         OPAEvaluateEngine instance;
-        if ((ret = instance.prepare_wasm(s_wasm_buf, s_wasm_size)) != SGX_QL_SUCCESS)
+        if ((ret = instance.prepare_wasm()) != SGX_QL_SUCCESS)
         {
             return ret;
         }

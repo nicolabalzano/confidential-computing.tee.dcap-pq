@@ -50,7 +50,9 @@ For Linux* OS
   * Ubuntu* 22.04 LTS Server 64bits
   * Ubuntu* 24.04 LTS Server 64bits
   * Red Hat Enterprise Linux Server release 9.4 64bits
+  * Red Hat Enterprise Linux Server release 10.0 64bits
   * CentOS Stream 9 64bits
+  * CentOS Stream 10 64bits
   * Anolis 8.10
   * Azure Linux 3.0
   * Debian 10 and 12
@@ -66,15 +68,15 @@ For Linux* OS
   ```
     $ sudo apt-get install build-essential wget python-is-python3 debhelper zip libcurl4-openssl-dev pkgconf libboost-dev libboost-system-dev libboost-thread-dev protobuf-c-compiler libprotobuf-c-dev protobuf-compiler
   ```
-  * On Red Hat Enterprise Linux 9.4
+  * On Red Hat Enterprise Linux 9.4 and 10.0
   ```
     $ sudo yum groupinstall 'Development Tools'
-    $ sudo yum install wget python2 rpm-build zip pkgconf boost-devel protobuf-lite-devel protobuf-c-compiler protobuf-c-devel
+    $ sudo yum install wget python3 python3-pip rpm-build zip pkgconf boost-devel protobuf-lite-devel protobuf-c-compiler protobuf-c-devel
   ```
-  * On CentOS Stream 9
+  * On CentOS Stream 9 and 10
   ```
     $ sudo dnf group install 'Development Tools'
-    $ sudo dnf --enablerepo=powertools install wget python2 rpm-build zip pkgconf boost-devel protobuf-lite-devel protobuf-c-compiler protobuf-c-devel
+    $ sudo dnf install wget python3 python3-pip rpm-build zip pkgconf boost-devel protobuf-lite-devel protobuf-c-compiler protobuf-c-devel
   ```
 - Install latest prebuilt Intel(R) SGX SDK Installer from [01.org](https://01.org/intel-software-guard-extensions/downloads)
 ```
@@ -126,7 +128,7 @@ A `README.md` is provided in the Intel(R) SGX driver package for Intel(R) SGX DC
   ```
   $ make deb_pkg DEBUG=1
   ```
-  * On Red Hat Enterprise Linux 9.4 and CentOS Stream 9:
+  * On Red Hat Enterprise Linux 9.4 and 10.0, CentOS Stream 9 and 10:
   ```
     $ make rpm_pkg
   ```
@@ -144,7 +146,7 @@ A `README.md` is provided in the Intel(R) SGX driver package for Intel(R) SGX DC
   ```
   **NOTE**: Sometimes we will split old package into smaller ones or move files between different packages. In such cases, you need to add `--force-overwrite` to overwrite existing files. If you're doing a fresh install, you can omit this option.
 
-  * On Red Hat Enterprise Linux 9.4 and CentOS Stream 9:
+  * On Red Hat Enterprise Linux 9.4 and 10.0, CentOS Stream 9 and 10:
   ```
     $ sudo rpm -ivh libsgx-ae-pce*.rpm libsgx-ae-qe3*.rpm libsgx-ae-id-enclave*.rpm libsgx-ae-qve*.rpm libsgx-enclave-common*.rpm libsgx-urts*.rpm
   ```
@@ -155,7 +157,7 @@ A `README.md` is provided in the Intel(R) SGX driver package for Intel(R) SGX DC
   ```
     $ sudo dpkg -i libsgx-dcap-ql_*.deb
   ```
-  * On Red Hat Enterprise Linux 9.4 and CentOS Stream 9:
+  * On Red Hat Enterprise Linux 9.4 and 10.0, CentOS Stream 9 and 10:
   ```
     $ sudo rpm -ivh libsgx-dcap-ql*.rpm
   ```
@@ -166,7 +168,7 @@ A `README.md` is provided in the Intel(R) SGX driver package for Intel(R) SGX DC
     $ sudo dpkg -i libsgx-dcap-ql-dev_*.deb
     $ sudo dpkg -i libsgx-dcap-ql-dbgsym_*.deb
   ```
-  * On Red Hat Enterprise Linux 9.4 and CentOS Stream 9:
+  * On Red Hat Enterprise Linux 9.4 and 10.0, CentOS Stream 9 and 10:
   ```
     $ sudo rpm -ivh libsgx-dcap-ql-devel*.rpm
     $ sudo rpm -ivh libsgx-dcap-ql-debuginfo*.rpm
@@ -179,7 +181,7 @@ A `README.md` is provided in the Intel(R) SGX driver package for Intel(R) SGX DC
     $ sudo dpkg -i libsgx-dcap-default-qpl_*.deb
     $ sudo dpkg -i sgx-dcap-pccs_*.deb
   ```
-  * On Red Hat Enterprise Linux 9.4 and CentOS Stream 9:
+  * On Red Hat Enterprise Linux 9.4 and 10.0, CentOS Stream 9 and 10:
   ```
     $ sudo rpm -ivh libsgx-dcap-default-qpl*.rpm
     $ sudo rpm -ivh sgx-dcap-pccs*.rpm
@@ -191,7 +193,7 @@ A `README.md` is provided in the Intel(R) SGX driver package for Intel(R) SGX DC
     $ sudo dpkg -i libsgx-dcap-default-qpl-dev*.deb libsgx-headers*.deb
     $ sudo dpkg -i libsgx-dcap-default-qpl-dbgsym*.deb
   ```
-  * On Red Hat Enterprise Linux 9.4 and CentOS Stream 9:
+  * On Red Hat Enterprise Linux 9.4 and 10.0, CentOS Stream 9 and 10:
   ```
     $ sudo rpm -ivh libsgx-dcap-default-qpl-devel*.rpm libsgx-headers*.rpm
     $ sudo rpm -ivh libsgx-dcap-default-qpl-debuginfo*.rpm

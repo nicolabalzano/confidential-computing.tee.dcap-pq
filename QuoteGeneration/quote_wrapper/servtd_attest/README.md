@@ -8,22 +8,24 @@ This README file contains "Attestation Library for Service TD" build instruction
 ### Prerequisites
 
 * Ensure that you have the following required operation systems: 
-  * Red Hat Enterprise Linux Server release 9.2 64bits
+  * Red Hat Enterprise Linux Server release 9.4 64bits
+  * Red Hat Enterprise Linux Server release 10.0 64bits
   * CentOS Stream 9 64bits
+  * CentOS Stream 10 64bits
   * Ubuntu* 22.04 LTS Server 64bits
-  * Ubuntu* 23.10 Server 64bits
+  * Ubuntu* 24.04 Server 64bits
 * Use the following commands to install the required tools:
-  *  On Red Hat Enterprise Linux 9.2
+  *  On Red Hat Enterprise Linux 9.4 and 10.0
   ```
     $ sudo yum groupinstall 'Development Tools'
     $ sudo yum install ocaml ocaml-ocamlbuild wget rpm-build pkgconf libtool
   ```
-  *  On CentOS Stream 9
+  *  On CentOS Stream 9 and 10
   ```
     $ sudo dnf group install 'Development Tools'
     $ sudo dnf install ocaml ocaml-ocamlbuild wget rpm-build pkgconf perl-FindBin libtool
   ```
-  * On Ubuntu 22.04 and Ubuntu 23.10
+  * On Ubuntu 22.04 and Ubuntu 24.04
   ```
     $ sudo apt-get install build-essential ocaml ocamlbuild wget pkgconf
   ```

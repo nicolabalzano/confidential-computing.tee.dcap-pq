@@ -40,15 +40,29 @@
 
 #ifndef _MSC_VER
 char *base64_encode(const char *input, int length) {
-  const auto encoded_len = 4*((length+2)/3);
-  auto output = reinterpret_cast<char *>(calloc(encoded_len+1, 1)); //+1 for the terminating null that EVP_EncodeBlock adds on
-  const auto output_len = EVP_EncodeBlock(reinterpret_cast<unsigned char *>(output), reinterpret_cast<const unsigned char *>(input), length);
-  if (encoded_len != output_len)
-  {
-      free(output);
-      return NULL;
-  }
-  return output;
+    if (input == NULL || length <= 0)
+    {
+        return NULL;
+    }
+    
+    size_t encoded_len = 4 * ((static_cast<size_t>(length) + 2) / 3);
+    size_t encoded_terminated_len = encoded_len + 1;     //+1 for the terminating null that EVP_EncodeBlock adds on
+    if (encoded_len < static_cast<size_t>(length) || encoded_terminated_len <= encoded_len)
+    {
+        return NULL;
+    }
+    auto output = reinterpret_cast<char *>(calloc(encoded_terminated_len, 1));
+    if (output == NULL)
+    {
+        return NULL;
+    }
+    const auto output_len = EVP_EncodeBlock(reinterpret_cast<unsigned char *>(output), reinterpret_cast<const unsigned char *>(input), length);
+    if (encoded_len != output_len || output_len < 0)
+    {
+        free(output);
+        return NULL;
+    }
+    return output;
 }
 
 #else

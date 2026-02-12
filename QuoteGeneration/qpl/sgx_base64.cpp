@@ -44,7 +44,10 @@ char *base64_encode(const char *input, int length) {
   auto output = reinterpret_cast<char *>(calloc(encoded_len+1, 1)); //+1 for the terminating null that EVP_EncodeBlock adds on
   const auto output_len = EVP_EncodeBlock(reinterpret_cast<unsigned char *>(output), reinterpret_cast<const unsigned char *>(input), length);
   if (encoded_len != output_len)
-    return NULL;
+  {
+      free(output);
+      return NULL;
+  }
   return output;
 }
 

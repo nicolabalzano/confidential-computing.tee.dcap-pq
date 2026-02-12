@@ -128,8 +128,8 @@ static bool is_verify_report2_available() {
   sgx_report2_mac_struct_t dummy_report_mac_struct;
   memset(&dummy_report_mac_struct, 0, sizeof(dummy_report_mac_struct));
   dummy_report_mac_struct.report_type.type = TEE_REPORT2_TYPE;
-  dummy_report_mac_struct.report_type.subtype = TEE_REPORT2_SUBTYPE;
-  dummy_report_mac_struct.report_type.version = TEE_REPORT2_VERSION;
+  dummy_report_mac_struct.report_type.subtype = TEE_REPORT2_SUBTYPE_0;
+  dummy_report_mac_struct.report_type.version = TEE_REPORT2_VERSION_0;
   if (SGX_ERROR_FEATURE_NOT_SUPPORTED ==
       sgx_verify_report2(&dummy_report_mac_struct)) {
     return false;
@@ -1178,30 +1178,30 @@ ret_point:
 static tdqe_error_t determine_quote_version(const sgx_report2_t *p_td_report,
     bool *gen_v5_quote,
     bool *mr_servicetd_valid,
-    bool *tee_tcb_svn2_valid)
+    bool *tee_tcb_svn2_valid,
+    bool *tdid_present,
+    bool *vmid_present)
 {
     tee_tcb_info_v1_5_t *p_tee_tcb_info_v1_5;
-    tee_info_t *p_tee_info;
-    tee_info_v1_5_t *p_tee_info_v1_5;
 
     // caller should pass in the right input
-    if (!p_td_report || !gen_v5_quote || !mr_servicetd_valid || !tee_tcb_svn2_valid) {
+    if (!p_td_report || !gen_v5_quote || !mr_servicetd_valid || !tee_tcb_svn2_valid
+        || !tdid_present || !vmid_present) {
         return (TDQE_ERROR_UNEXPECTED);
     }
     *gen_v5_quote = false;
     *mr_servicetd_valid = false;
     *tee_tcb_svn2_valid = false;
+    *tdid_present = false;
+    *vmid_present = false;
     ref_static_assert(sizeof(tee_tcb_info_v1_5_t) == sizeof(p_td_report->tee_tcb_info));
     p_tee_tcb_info_v1_5 = (tee_tcb_info_v1_5_t *)p_td_report->tee_tcb_info;
 
-    ref_static_assert(sizeof(tee_info_t) == sizeof(p_td_report->tee_info));
-    p_tee_info = (tee_info_t *)p_td_report->tee_info;
-
-    ref_static_assert(sizeof(tee_info_v1_5_t) == sizeof(p_td_report->tee_info));
-    p_tee_info_v1_5 = (tee_info_v1_5_t *)p_td_report->tee_info;
-
     // we are checking to make sure the TDINF0.RESERVED bytes match the expected values for a TDX 1.0 report
     if (!p_td_report->report_mac_struct.report_type.version) {
+        tee_info_t *p_tee_info;
+        ref_static_assert(sizeof(tee_info_t) == sizeof(p_td_report->tee_info));
+        p_tee_info = (tee_info_t *)p_td_report->tee_info;
         for (int i = 0; i < TD_INFO_RESERVED_BYTES_V1; i++) {
             if (p_tee_info->reserved[i]) {
                 return (TDQE_REPORT_FORMAT_NOT_SUPPORTED);
@@ -1231,6 +1231,10 @@ static tdqe_error_t determine_quote_version(const sgx_report2_t *p_td_report,
             }
         }
     } else if (p_td_report->report_mac_struct.report_type.version == 1) {
+        tee_info_v1_5_t *p_tee_info_v1_5;
+        ref_static_assert(sizeof(tee_info_v1_5_t) == sizeof(p_td_report->tee_info));
+        p_tee_info_v1_5 = (tee_info_v1_5_t *)p_td_report->tee_info;
+
         for (int i = 0; i < TD_INFO_RESERVED_BYTES_V1_5; i++) {
             if (p_tee_info_v1_5->reserved[i]) {
                 return (TDQE_REPORT_FORMAT_NOT_SUPPORTED);
@@ -1255,6 +1259,51 @@ static tdqe_error_t determine_quote_version(const sgx_report2_t *p_td_report,
             *tee_tcb_svn2_valid = false;
         } else {
             return (TDQE_REPORT_FORMAT_NOT_SUPPORTED);
+        }
+    } else if (p_td_report->report_mac_struct.report_type.version == 3) {
+        tee_info_v1_5_ex_t *p_tee_info_v1_5_ex;
+        ref_static_assert(sizeof(tee_info_v1_5_ex_t) == sizeof(p_td_report->tee_info));
+        p_tee_info_v1_5_ex = (tee_info_v1_5_ex_t *)p_td_report->tee_info;
+        for (int i = 0; i < TD_INFO_RESERVED_BYTES_V1_5_EX; i++) {
+            if (p_tee_info_v1_5_ex->reserved[i]) {
+                return (TDQE_REPORT_FORMAT_NOT_SUPPORTED);
+            }
+        }
+
+        if (p_tee_tcb_info_v1_5->valid[0] != 0xFF || p_tee_tcb_info_v1_5->valid[1] != 1) {
+            return (TDQE_REPORT_FORMAT_NOT_SUPPORTED);
+        }
+        // Make sure valid[3-8] are all zero
+        for (size_t i = 3; i < sizeof(p_tee_tcb_info_v1_5->valid); i++) {
+            if (p_tee_tcb_info_v1_5->valid[i]) {
+                return (TDQE_REPORT_FORMAT_NOT_SUPPORTED);
+            }
+        }
+
+        *gen_v5_quote = true;
+        *mr_servicetd_valid = true;
+        // a value of 0x301FF indicates a TDREPORT1.5 format. (supports TDPRESERVING)
+        if (p_tee_tcb_info_v1_5->valid[2] == 3) {
+            *tee_tcb_svn2_valid = true;
+        } else if (p_tee_tcb_info_v1_5->valid[2] == 0) {
+            *tee_tcb_svn2_valid = false;
+        } else {
+            return (TDQE_REPORT_FORMAT_NOT_SUPPORTED);
+        }
+
+        if (p_tee_info_v1_5_ex->valid & tee_info_v1_5_ex_t::critical_reserved) {
+            return (TDQE_REPORT_FORMAT_NOT_SUPPORTED);
+        }
+
+        if (!(p_tee_info_v1_5_ex->valid & tee_info_v1_5_ex_t::td_id_bit)
+            && !(p_tee_info_v1_5_ex->valid & tee_info_v1_5_ex_t::vm_id_bit)) {
+            return (TDQE_REPORT_FORMAT_NOT_SUPPORTED);
+        }
+        if (p_tee_info_v1_5_ex->valid & tee_info_v1_5_ex_t::td_id_bit) {
+            *tdid_present = true;
+        }
+        if (p_tee_info_v1_5_ex->valid & tee_info_v1_5_ex_t::vm_id_bit) {
+            *vmid_present = true;
         }
     } else {
         return (TDQE_REPORT_FORMAT_NOT_SUPPORTED);
@@ -1330,9 +1379,11 @@ uint32_t gen_quote(uint8_t *p_blob,
     bool gen_v5_quote = false;
     bool mr_servicetd_valid = false;
     bool tee_tcb_svn2_valid = false;
+    bool tdid_present = false;
+    bool vmid_present = false;
 
     if (!is_verify_report2_available()) {
-      return (TDQE_ERROR_INVALID_PLATFORM);
+        return (TDQE_ERROR_INVALID_PLATFORM);
     }
     //
     // provide extra protection for attestation key by
@@ -1439,7 +1490,12 @@ uint32_t gen_quote(uint8_t *p_blob,
         }
     }
 
-    ret = determine_quote_version(p_td_report, &gen_v5_quote, &mr_servicetd_valid, &tee_tcb_svn2_valid);
+    ret = determine_quote_version(p_td_report,
+                    &gen_v5_quote,
+                    &mr_servicetd_valid,
+                    &tee_tcb_svn2_valid,
+                    &tdid_present,
+                    &vmid_present);
     if (TDQE_SUCCESS != ret) {
         return (ret);
     }
@@ -1511,9 +1567,9 @@ uint32_t gen_quote(uint8_t *p_blob,
         }
         else {
             // Check for overflow before adding in the variable size of certification data
-            // Also take the sgx_quote5_t and sgx_report2_body_v1_5_t into account, so we don't
+            // Also take the sgx_quote5_t and sgx_report2_body_v1_5_ex_t into account, so we don't
             // need to check overflow for required_buffer_size
-            if (UINT32_MAX - sign_size - sizeof(sgx_quote5_t) - sizeof(sgx_report2_body_v1_5_t)
+            if (UINT32_MAX - sign_size - sizeof(sgx_quote5_t) - sizeof(sgx_report2_body_v1_5_ex_t)
                 > ((sgx_ql_certification_data_t *)p_certification_data)->size) {
                 sign_size += ((sgx_ql_certification_data_t *)p_certification_data)->size;
             } else {
@@ -1523,20 +1579,26 @@ uint32_t gen_quote(uint8_t *p_blob,
         }
     }
     /* Check for overflow before adding in the variable size of authentication data. */
-    if ((UINT32_MAX - sign_size - sizeof(sgx_quote5_t) - sizeof(sgx_report2_body_v1_5_t)) < plaintext.authentication_data_size) {
+    if ((UINT32_MAX - sign_size - sizeof(sgx_quote5_t) - sizeof(sgx_report2_body_v1_5_ex_t)) < plaintext.authentication_data_size) {
         ret = TDQE_ERROR_INVALID_PARAMETER;
         goto ret_point;
     }
     sign_size += plaintext.authentication_data_size;     // Authentication data
 
-    // Always require buffer size for quote v5, which is big enough for both v4 and v5 quote.
+    // Always require buffer size for quote v5 type 4, which is big enough for both v4 and v5 quote.
     required_buffer_size = sizeof(sgx_quote5_t)
-                           + sizeof(sgx_report2_body_v1_5_t)
+                           + sizeof(sgx_report2_body_v1_5_ex_t)
                            + sizeof(uint32_t) // Field for Auth Data size, or signature_data_len in code
                            + sign_size;
 
     if (gen_v5_quote) {
-        real_quote_size = required_buffer_size;
+        if (tdid_present || vmid_present) {
+            real_quote_size = required_buffer_size;
+        } else {
+            real_quote_size = required_buffer_size
+                              - sizeof(sgx_report2_body_v1_5_ex_t)
+                              + sizeof(sgx_report2_body_v1_5_t);
+        }
     } else { // We only support v5 and v4 quote, so following size is for v4
         // v5 quote is bigger then v4, we've check overflow case for v5 already.
         // So don't need to check it here.
@@ -1559,8 +1621,13 @@ uint32_t gen_quote(uint8_t *p_blob,
     p_quote = (sgx_quote4_t *)p_quote_buf;
     p_quote_v5 = (sgx_quote5_t *)p_quote_buf;
     if (gen_v5_quote) {
-        p_sig_len = (uint32_t *)(p_quote_v5->body + sizeof(sgx_report2_body_v1_5_t));
-        p_quote_sig = (sgx_ecdsa_sig_data_v4_t *)(p_quote_v5->body + sizeof(sgx_report2_body_v1_5_t) + sizeof(uint32_t));
+        if (tdid_present || vmid_present) {
+            p_sig_len = (uint32_t *)(p_quote_v5->body + sizeof(sgx_report2_body_v1_5_ex_t));
+            p_quote_sig = (sgx_ecdsa_sig_data_v4_t *)(p_quote_v5->body + sizeof(sgx_report2_body_v1_5_ex_t) + sizeof(uint32_t));
+        } else {
+            p_sig_len = (uint32_t *)(p_quote_v5->body + sizeof(sgx_report2_body_v1_5_t));
+            p_quote_sig = (sgx_ecdsa_sig_data_v4_t *)(p_quote_v5->body + sizeof(sgx_report2_body_v1_5_t) + sizeof(uint32_t));
+        }
     } else { // v4 quote
         p_sig_len = &p_quote->signature_data_len;
         p_quote_sig = (sgx_ecdsa_sig_data_v4_t *)(p_quote->signature_data);
@@ -1595,36 +1662,74 @@ uint32_t gen_quote(uint8_t *p_blob,
     memcpy(p_quote->header.vendor_id, g_vendor_id, sizeof(g_vendor_id));
 
     if (gen_v5_quote) {
-        sgx_report2_body_v1_5_t *p_report_body_v2 = (sgx_report2_body_v1_5_t *)p_quote_v5->body;
-        tee_tcb_info_v1_5_t *p_tee_tcb_info_v2 = (tee_tcb_info_v1_5_t *)p_td_report->tee_tcb_info;
-        tee_info_v1_5_t *p_tee_info_v2 = (tee_info_v1_5_t *)p_td_report->tee_info;
+        if (tdid_present || vmid_present) {
+            sgx_report2_body_v1_5_ex_t *p_report_body_v2 = (sgx_report2_body_v1_5_ex_t *)p_quote_v5->body;
+            tee_tcb_info_v1_5_t *p_tee_tcb_info_v2 = (tee_tcb_info_v1_5_t *)p_td_report->tee_tcb_info;
+            tee_info_v1_5_ex_t *p_tee_info_v2 = (tee_info_v1_5_ex_t *)p_td_report->tee_info;
 
-        p_quote_v5->header.version = QE_QUOTE_VERSION_V5;
-        p_quote_v5->type = 3; // (TD Report for TDX 1.5)
-        p_quote_v5->size = (uint32_t)(sizeof(sgx_report2_body_v1_5_t));
-        // Fill the td report body.
-        memset(p_report_body_v2, 0, sizeof(*p_report_body_v2));
+            p_quote_v5->header.version = QE_QUOTE_VERSION_V5;
+            p_quote_v5->type = 4;
+            p_quote_v5->size = (uint32_t)(sizeof(sgx_report2_body_v1_5_ex_t));
+            // Fill the td report body.
+            memset(p_report_body_v2, 0, sizeof(*p_report_body_v2));
 
-        memcpy(&(p_report_body_v2->tee_tcb_svn), &(p_tee_tcb_info_v2->tee_tcb_svn), sizeof(p_report_body_v2->tee_tcb_svn));
-        memcpy(&(p_report_body_v2->mr_seam), &(p_tee_tcb_info_v2->mr_seam), sizeof(p_report_body_v2->mr_seam));
+            memcpy(&(p_report_body_v2->tee_tcb_svn), &(p_tee_tcb_info_v2->tee_tcb_svn), sizeof(p_report_body_v2->tee_tcb_svn));
+            memcpy(&(p_report_body_v2->mr_seam), &(p_tee_tcb_info_v2->mr_seam), sizeof(p_report_body_v2->mr_seam));
 
-        memcpy(&(p_report_body_v2->td_attributes), &(p_tee_info_v2->attributes), sizeof(p_report_body_v2->td_attributes));
-        memcpy(&(p_report_body_v2->xfam), &(p_tee_info_v2->xfam), sizeof(p_report_body_v2->xfam));
-        memcpy(&(p_report_body_v2->mr_td), &(p_tee_info_v2->mr_td), sizeof(p_report_body_v2->mr_td));
-        memcpy(&(p_report_body_v2->mr_config_id), &(p_tee_info_v2->mr_config_id), sizeof(p_report_body_v2->mr_config_id));
-        memcpy(&(p_report_body_v2->mr_owner), &(p_tee_info_v2->mr_owner), sizeof(p_report_body_v2->mr_owner));
-        memcpy(&(p_report_body_v2->mr_owner_config), &(p_tee_info_v2->mr_owner_config), sizeof(p_report_body_v2->mr_owner_config));
-        memcpy(p_report_body_v2->rt_mr, p_tee_info_v2->rt_mr, sizeof(p_report_body_v2->rt_mr));
-        memcpy(&(p_report_body_v2->report_data), &(p_td_report->report_mac_struct.report_data), sizeof(p_report_body_v2->report_data));
-        if (tee_tcb_svn2_valid) {
-            memcpy(&(p_report_body_v2->tee_tcb_svn2), &(p_tee_tcb_info_v2->tee_tcb_svn2), sizeof(p_report_body_v2->tee_tcb_svn2));
+            memcpy(&(p_report_body_v2->td_attributes), &(p_tee_info_v2->attributes), sizeof(p_report_body_v2->td_attributes));
+            memcpy(&(p_report_body_v2->xfam), &(p_tee_info_v2->xfam), sizeof(p_report_body_v2->xfam));
+            memcpy(&(p_report_body_v2->mr_td), &(p_tee_info_v2->mr_td), sizeof(p_report_body_v2->mr_td));
+            memcpy(&(p_report_body_v2->mr_config_id), &(p_tee_info_v2->mr_config_id), sizeof(p_report_body_v2->mr_config_id));
+            memcpy(&(p_report_body_v2->mr_owner), &(p_tee_info_v2->mr_owner), sizeof(p_report_body_v2->mr_owner));
+            memcpy(&(p_report_body_v2->mr_owner_config), &(p_tee_info_v2->mr_owner_config), sizeof(p_report_body_v2->mr_owner_config));
+            memcpy(p_report_body_v2->rt_mr, p_tee_info_v2->rt_mr, sizeof(p_report_body_v2->rt_mr));
+            if (tee_tcb_svn2_valid) {
+                memcpy(&(p_report_body_v2->tee_tcb_svn2), &(p_tee_tcb_info_v2->tee_tcb_svn2), sizeof(p_report_body_v2->tee_tcb_svn2));
+            } else {
+                memcpy(&(p_report_body_v2->tee_tcb_svn), &(p_tee_tcb_info_v2->tee_tcb_svn2), sizeof(p_report_body_v2->tee_tcb_svn));
+            }
+            if (mr_servicetd_valid) {
+                memcpy(&(p_report_body_v2->mr_servicetd), &(p_tee_info_v2->mr_servicetd), sizeof(p_report_body_v2->mr_servicetd));
+            }
+            if (tdid_present) {
+                memcpy(&(p_report_body_v2->td_id), &(p_tee_info_v2->td_id), sizeof(p_report_body_v2->td_id));
+            }
+            if (vmid_present) {
+                memcpy(&(p_report_body_v2->vmid), &(p_tee_info_v2->vmid), sizeof(p_report_body_v2->vmid));
+            }
+            sign_buf_size = sizeof(*p_quote_v5) + sizeof(*p_report_body_v2);
         } else {
-            memcpy(&(p_report_body_v2->tee_tcb_svn), &(p_tee_tcb_info_v2->tee_tcb_svn2), sizeof(p_report_body_v2->tee_tcb_svn));
+            sgx_report2_body_v1_5_t *p_report_body_v2 = (sgx_report2_body_v1_5_t *)p_quote_v5->body;
+            tee_tcb_info_v1_5_t *p_tee_tcb_info_v2 = (tee_tcb_info_v1_5_t *)p_td_report->tee_tcb_info;
+            tee_info_v1_5_t *p_tee_info_v2 = (tee_info_v1_5_t *)p_td_report->tee_info;
+
+            p_quote_v5->header.version = QE_QUOTE_VERSION_V5;
+            p_quote_v5->type = 3; // (TD Report for TDX 1.5)
+            p_quote_v5->size = (uint32_t)(sizeof(sgx_report2_body_v1_5_t));
+            // Fill the td report body.
+            memset(p_report_body_v2, 0, sizeof(*p_report_body_v2));
+
+            memcpy(&(p_report_body_v2->tee_tcb_svn), &(p_tee_tcb_info_v2->tee_tcb_svn), sizeof(p_report_body_v2->tee_tcb_svn));
+            memcpy(&(p_report_body_v2->mr_seam), &(p_tee_tcb_info_v2->mr_seam), sizeof(p_report_body_v2->mr_seam));
+
+            memcpy(&(p_report_body_v2->td_attributes), &(p_tee_info_v2->attributes), sizeof(p_report_body_v2->td_attributes));
+            memcpy(&(p_report_body_v2->xfam), &(p_tee_info_v2->xfam), sizeof(p_report_body_v2->xfam));
+            memcpy(&(p_report_body_v2->mr_td), &(p_tee_info_v2->mr_td), sizeof(p_report_body_v2->mr_td));
+            memcpy(&(p_report_body_v2->mr_config_id), &(p_tee_info_v2->mr_config_id), sizeof(p_report_body_v2->mr_config_id));
+            memcpy(&(p_report_body_v2->mr_owner), &(p_tee_info_v2->mr_owner), sizeof(p_report_body_v2->mr_owner));
+            memcpy(&(p_report_body_v2->mr_owner_config), &(p_tee_info_v2->mr_owner_config), sizeof(p_report_body_v2->mr_owner_config));
+            memcpy(p_report_body_v2->rt_mr, p_tee_info_v2->rt_mr, sizeof(p_report_body_v2->rt_mr));
+            memcpy(&(p_report_body_v2->report_data), &(p_td_report->report_mac_struct.report_data), sizeof(p_report_body_v2->report_data));
+            if (tee_tcb_svn2_valid) {
+                memcpy(&(p_report_body_v2->tee_tcb_svn2), &(p_tee_tcb_info_v2->tee_tcb_svn2), sizeof(p_report_body_v2->tee_tcb_svn2));
+            } else {
+                memcpy(&(p_report_body_v2->tee_tcb_svn), &(p_tee_tcb_info_v2->tee_tcb_svn2), sizeof(p_report_body_v2->tee_tcb_svn));
+            }
+            if (mr_servicetd_valid) {
+                memcpy(&(p_report_body_v2->mr_servicetd), &(p_tee_info_v2->mr_servicetd), sizeof(p_report_body_v2->mr_servicetd));
+            }
+            sign_buf_size = sizeof(*p_quote_v5) + sizeof(*p_report_body_v2);
         }
-        if (mr_servicetd_valid) {
-            memcpy(&(p_report_body_v2->mr_servicetd), &(p_tee_info_v2->mr_servicetd), sizeof(p_report_body_v2->mr_servicetd));
-        }
-        sign_buf_size = sizeof(*p_quote_v5) + sizeof(*p_report_body_v2);
     } else {
         sgx_report2_body_t *p_report_body = &p_quote->report_body;
         tee_tcb_info_t *p_tee_tcb_info = (tee_tcb_info_t *)p_td_report->tee_tcb_info;

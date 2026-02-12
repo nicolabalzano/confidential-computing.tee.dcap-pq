@@ -1701,7 +1701,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
         // quote v4 and quote v5 have different fields and different size. v5 is bigger, so
         // we will return quote v5(Quote Body.type = 3) size here.
         *p_quote_size = sizeof(sgx_quote5_t) +                // quote body
-                        sizeof(sgx_report2_body_v1_5_t) +     // copy from TD Report for TDX 1.5
+                        sizeof(sgx_report2_body_v1_5_ex_t) +     // copy from TD Report for TDX 1.5 type 4
                         sizeof(uint32_t) +                    // Field for Auth Data size
                         sizeof(sgx_ecdsa_sig_data_v4_t) +     // signature
                         sizeof(sgx_ql_certification_data_t) + // cert_key_type == ECDSA_SIG_AUX_DATA
@@ -1729,7 +1729,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
         }
         // Overflow will not occur since the cer_data_size is limited above
         *p_quote_size = (uint32_t)(sizeof(sgx_quote5_t) +                // quote body
-                                   sizeof(sgx_report2_body_v1_5_t) +     // copy from TD Report for TDX 1.5
+                                   sizeof(sgx_report2_body_v1_5_ex_t) +     // copy from TD Report for TDX 1.5 type 4
                                    sizeof(uint32_t) +                    // Field for Auth Data size
                                    sizeof(sgx_ecdsa_sig_data_v4_t) +     // signature
                                    sizeof(sgx_ql_certification_data_t) + // cert_key_type == ECDSA_SIG_AUX_DATA

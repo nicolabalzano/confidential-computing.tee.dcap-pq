@@ -379,9 +379,11 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
         if (req_size == sizeof(sgx_report2_t)) {
             sgx_report2_t * p_report = (sgx_report2_t *)req;
             if (p_report->report_mac_struct.report_type.type != TEE_REPORT2_TYPE
-                || p_report->report_mac_struct.report_type.subtype != TEE_REPORT2_SUBTYPE
-                || (p_report->report_mac_struct.report_type.version != TEE_REPORT2_VERSION
-                    && p_report->report_mac_struct.report_type.version != TEE_REPORT2_VERSION_SERVICETD)
+                || (p_report->report_mac_struct.report_type.subtype != TEE_REPORT2_SUBTYPE_0
+                    && p_report->report_mac_struct.report_type.subtype != TEE_REPORT2_SUBTYPE_1)
+                || (p_report->report_mac_struct.report_type.version != TEE_REPORT2_VERSION_0
+                    && p_report->report_mac_struct.report_type.version != TEE_REPORT2_VERSION_1
+                    && p_report->report_mac_struct.report_type.version != TEE_REPORT2_VERSION_3)
                 || p_report->report_mac_struct.report_type.reserved != 0
                 || is_any_byte_none_zero(p_report->report_mac_struct.reserved1, SGX_REPORT2_MAC_STRUCT_RESERVED1_BYTES)
                 || is_any_byte_none_zero(p_report->report_mac_struct.reserved2, SGX_REPORT2_MAC_STRUCT_RESERVED2_BYTES)

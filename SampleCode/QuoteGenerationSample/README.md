@@ -18,6 +18,7 @@ Intel(R) Software Guard Extensions Data Center Attestation Primitives (Intel(R) 
 * gcc
 * g++
 * bash shell
+* libubsan (only for DEBUG builds of the app and its DCAP dependencies)
 ## Prerequisite:
 * Linux 5.11 and above, or Intel(R) SGX DCAP Driver
 * Intel(R) SGX SDK

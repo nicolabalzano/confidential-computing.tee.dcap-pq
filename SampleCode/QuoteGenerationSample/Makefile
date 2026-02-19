@@ -71,7 +71,12 @@ endif
 
 
 App_Cpp_Flags := $(App_C_Flags) -std=c++11
-App_Link_Flags := -fsanitize=undefined $(SGX_COMMON_CFLAGS) -l$(DCAP_Library_Name) -l$(Urts_Library_Name) -ldl -lpthread
+App_Link_Flags := $(SGX_COMMON_CFLAGS) -l$(DCAP_Library_Name) -l$(Urts_Library_Name) -ldl -lpthread
+
+ifeq ($(DEBUG),1)
+        App_Link_Flags += -fsanitize=undefined
+endif
+
 #
 # Check if SGX_QPL_LOGGING is either 0 , 1 or 2
 ifeq ($(filter $(SGX_QPL_LOGGING),0 1 2),)

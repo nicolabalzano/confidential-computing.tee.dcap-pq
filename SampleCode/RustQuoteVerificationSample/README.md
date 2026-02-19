@@ -24,7 +24,7 @@ Requirements:
 * Rust and Cargo
 
 Prerequisite:
-* Intel(R) SGX DCAP Driver
+* Linux kernel v5.11 and above
 * Intel(R) SGX SDK
 * Intel(R) SGX DCAP Packages
 * Intel(R) SGX DCAP PCCS (Provisioning Certificate Caching Service)

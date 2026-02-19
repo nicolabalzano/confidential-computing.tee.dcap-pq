@@ -89,13 +89,6 @@ For Linux* OS
   $ ./download_prebuilt.sh
 ```
 
-## Build and Install Intel(R) SGX Driver
-A `README.md` is provided in the Intel(R) SGX driver package for Intel(R) SGX DCAP. Please follow the instructions in the `README.md` to build and install Intel(R) SGX driver.
-- The enclave user needs to be added to the group of "sgx_prv" if customers want to use their own provision enclave:
-```
-  $ sudo usermod -aG sgx_prv user
-```
-
 ## Build the Intel(R) SGX DCAP Quote Generation Library and the Intel(R) SGX Default Quote Provider Library Package
 - To set the environment variables, enter the following command:
 ```

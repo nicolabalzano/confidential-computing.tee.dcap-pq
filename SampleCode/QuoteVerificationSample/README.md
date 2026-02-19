@@ -22,7 +22,7 @@ Intel(R) Software Guard Extensions Data Center Attestation Primitives (Intel(R) 
 * bash shell
 
 ## Prerequisite:
-* Linux 5.11 and above, or Intel(R) SGX DCAP Driver
+* Linux kernel v5.11 and above
 * Intel(R) SGX SDK
 * Intel(R) SGX DCAP Development Packages
 

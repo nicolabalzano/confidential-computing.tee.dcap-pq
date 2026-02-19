@@ -9,7 +9,7 @@ When reporting a bug, please provide the following information, where applicable
 
 * What are the steps to reproduce the bug?
 * Can you reproduce the bug using the latest [master](https://github.com/intel/SGXDataCenterAttestationPrimitives/tree/master)?
-* What CPU, platform, operating system/distribution, SGX driver, SGX SDK and SGX PSW are you running? The more specific, the better.
+* What CPU, platform, operating system/distribution, SGX SDK, and SGX PSW are you running? The more specific, the better.
 * For crashes, please provide the backtrace (use gdb).
 
 

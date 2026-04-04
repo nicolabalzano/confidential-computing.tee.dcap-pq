@@ -1795,6 +1795,9 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
     sgx_ql_certification_data_t *p_certification_data = NULL;
     sgx_psvn_t pce_cert_psvn;
     int blob_mutex_rc = 0;
+    const sgx_quote4_t *p_quote_v4 = NULL;
+    uint32_t signature_size = 0;
+    uint16_t quote_version = 0;
 
     //Verify inputs
     if (NULL == p_app_report ||
@@ -1993,9 +1996,8 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
         goto CLEANUP;
     }
 
-    const sgx_quote4_t *p_quote_v4 = reinterpret_cast<const sgx_quote4_t *>(p_quote);
-    uint32_t signature_size = 0;
-    uint16_t quote_version = p_quote_v4->header.version;
+    p_quote_v4 = reinterpret_cast<const sgx_quote4_t *>(p_quote);
+    quote_version = p_quote_v4->header.version;
 
     if (QE_QUOTE_VERSION_V5 == quote_version) {
         const sgx_quote5_t *p_quote_v5 = reinterpret_cast<const sgx_quote5_t *>(p_quote);

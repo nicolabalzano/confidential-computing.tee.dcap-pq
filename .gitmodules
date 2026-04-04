@@ -1,6 +1,6 @@
 [submodule "QuoteVerification/QVL"]
 	path = QuoteVerification/QVL
-	url = ../confidential-computing.tee.dcap.qvl.git
+	url = https://github.com/intel/confidential-computing.tee.dcap.qvl.git
 	branch = .
 [submodule "external/wasm-micro-runtime"]
 	path = external/wasm-micro-runtime
@@ -15,5 +15,5 @@
 	branch = v1.16.x
 [submodule "QuoteGeneration/pccs"]
 	path = QuoteGeneration/pccs
-	url = ../confidential-computing.tee.dcap.pccs.git
+	url = https://github.com/intel/confidential-computing.tee.dcap.pccs.git
 	branch = .

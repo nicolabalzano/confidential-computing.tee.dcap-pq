@@ -5,6 +5,7 @@
  */
 
 #include <climits>
+#include <cstddef>
 #include <string.h>
 #include <limits.h>
 
@@ -1711,6 +1712,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
                         sizeof(sgx_ql_certification_data_t) +              // cert_key_type == PPID_RSA3072_ENCRYPTED
                         sizeof(sgx_ql_ppid_rsa3072_encrypted_cert_info_t); // RSA3072_ENC_PPID + PCE CPUSVN + PCE ISVSNV + PCEID
         refqt_ret = TEE_ATT_SUCCESS;
+        SE_PROD_LOG("[tdx-quote-debug] ecdsa_get_quote_size: quote_size=%u (default certification data path).\n", *p_quote_size);
     }
     else {
         // Verify that the cert_data_size is reasonable.
@@ -1738,6 +1740,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
                                    REF_ECDSDA_AUTHENTICATION_DATA_SIZE + // Authentication data
                                    sizeof(sgx_ql_certification_data_t) + // cert_key_type == PCK_CERT_CHAIN
                                    cert_data_size);                      // certification data size returned by get_platform_quote_cert_data()
+        SE_PROD_LOG("[tdx-quote-debug] ecdsa_get_quote_size: quote_size=%u (platform cert path, cert_data_size=%u).\n", *p_quote_size, cert_data_size);
     }
 
     CLEANUP:
@@ -1963,6 +1966,9 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
     }
 
     SE_TRACE(SE_TRACE_NOTICE, "Call TDQE gen_quote\n");
+    SE_PROD_LOG("[tdx-quote-debug] ecdsa_get_quote: entering gen_quote with quote_size=%u cert_data_size=%u.\n",
+                quote_size,
+                p_certification_data ? cert_data_size : 0);
     sgx_status = gen_quote(m_eid,
                            (uint32_t*)&tdqe_error,
                            (uint8_t*)m_ecdsa_blob,
@@ -1986,6 +1992,38 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
         refqt_ret = (tee_att_error_t)tdqe_error;
         goto CLEANUP;
     }
+
+    const sgx_quote4_t *p_quote_v4 = reinterpret_cast<const sgx_quote4_t *>(p_quote);
+    uint32_t signature_size = 0;
+    uint16_t quote_version = p_quote_v4->header.version;
+
+    if (QE_QUOTE_VERSION_V5 == quote_version) {
+        const sgx_quote5_t *p_quote_v5 = reinterpret_cast<const sgx_quote5_t *>(p_quote);
+        size_t sig_len_offset = offsetof(sgx_quote5_t, body) + p_quote_v5->size;
+        if (quote_size >= sig_len_offset + sizeof(uint32_t)) {
+            signature_size = *(reinterpret_cast<const uint32_t *>(p_quote + sig_len_offset));
+            SE_PROD_LOG("[tdx-quote-debug] ecdsa_get_quote: quote_version=%u quote_type=%u quote_body_size=%u sign_size=%u total_quote_size=%u.\n",
+                        quote_version,
+                        p_quote_v5->type,
+                        p_quote_v5->size,
+                        signature_size,
+                        quote_size);
+        }
+        else {
+            SE_PROD_LOG("[tdx-quote-debug] ecdsa_get_quote: quote_version=%u has truncated buffer (quote_size=%u, sig_len_offset=%zu).\n",
+                        quote_version,
+                        quote_size,
+                        sig_len_offset);
+        }
+    }
+    else {
+        signature_size = p_quote_v4->signature_data_len;
+        SE_PROD_LOG("[tdx-quote-debug] ecdsa_get_quote: quote_version=%u sign_size=%u total_quote_size=%u.\n",
+                    quote_version,
+                    signature_size,
+                    quote_size);
+    }
+
     SE_TRACE(SE_TRACE_NOTICE, "Get quote success\n");
 
     CLEANUP:

@@ -61,7 +61,7 @@ extern const sgx_ql_att_key_id_t g_default_ecdsa_p256_att_key_id =
 {
     0,                                                                                                   // ID
     0,                                                                                                   // Version
-    32,                                                                                                  // Number of bytes in MRSIGNER
+    32,   //it is the hash of the public key of the entity that sign the enclave TDQE                    // Number of bytes in MRSIGNER
     { 0x8c, 0x4f, 0x57, 0x75, 0xd7, 0x96, 0x50, 0x3e, 0x96, 0x13, 0x7f, 0x77, 0xc6, 0x8a, 0x82, 0x9a,
       0x00, 0x56, 0xac, 0x8d, 0xed, 0x70, 0x14, 0x0b, 0x08, 0x1b, 0x09, 0x44, 0x90, 0xc5, 0x7b, 0xff,
       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},   // Production TDQE's MRSIGNER
@@ -111,7 +111,7 @@ tee_att_error_t tee_att_create_context(const tee_att_att_key_id_t* p_att_key_id,
             {
                 return(TEE_ATT_UNSUPPORTED_ATT_KEY_ID);
             }
-            if (SGX_QL_ALG_ECDSA_P256 != p_att_key_id->base.algorithm_id)
+            if (SGX_QL_ALG_ECDSA_P256 != p_att_key_id->base.algorithm_id)       //verify that the algoritm id is ECDSA
             {
                 return(TEE_ATT_UNSUPPORTED_ATT_KEY_ID);
             }
@@ -345,11 +345,12 @@ tee_att_error_t tee_att_get_quote_size(const tee_att_config_t* p_context,
     return(ret_val);
 }
 
-tee_att_error_t tee_att_get_quote(const tee_att_config_t* p_context,
-    const uint8_t* p_report,
-    uint32_t report_size,
-    sgx_qe_report_info_t* p_qe_report_info,
-    uint8_t* p_quote,
+// ingress point to get the quote generation, get the hw report and invoke the TDQE (Trusted Domain Quoting Enclave)
+tee_att_error_t tee_att_get_quote(const tee_att_config_t* p_context,    // configuration context
+    const uint8_t* p_report,                                            // hw report
+    uint32_t report_size,                                               // report size
+    sgx_qe_report_info_t* p_qe_report_info,                             // not used
+    uint8_t* p_quote,                                                   // pointer in which quota will written
     uint32_t quote_size)
 {
 

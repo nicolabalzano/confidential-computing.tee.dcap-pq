@@ -50,7 +50,7 @@ Quote_Major := $(Quote_Name).$(call get_major_version,TDQE_WRAPPER_VERSION)
 -include $(Quote_C_Depends)
 -include $(Quote_Cpp_Depends)
 
-.PHONY: all
+.PHONY: all test_app
 all: install_lib
 
 install_lib: $(Quote_Name) | $(BUILD_DIR)
@@ -87,6 +87,13 @@ $(Quote_Name): $(Quote_C_Objects) $(Quote_Cpp_Objects) $(PCE_Library)
 $(PCE_Library): force_look
 	@make -C $(PCE_Library_Dir)
 
+test_app: $(Quote_Name) ../../test_tdx_quote_wrapper.cpp
+	@make -C ../../tdx_attest/linux
+	$(CXX) $(Quote_Cpp_Flags) -I../../tdx_attest -I../../common/inc \
+		../../test_tdx_quote_wrapper.cpp -L. -lsgx_tdx_logic -L../../tdx_attest/linux -ltdx_attest \
+		-lsgx_urts -lpthread -ldl -o $@
+	@echo "LINK =>  $@"
+
 $(TDQE_Signed_Name): force_look
 	@make -C $(TDQE_Dir)
 
@@ -101,7 +108,7 @@ force_look:
 clean:
 	@$(RM) .config_* $(Quote_Name) $(Quote_C_Objects) $(Quote_Cpp_Objects) \
 	    $(Quote_C_Depends) $(Quote_Cpp_Depends) tdqe_u.* id_enclave_u.*    \
-	    $(addprefix $(BUILD_DIR)/,$(Quote_Name) $(Quote_Full) $(Quote_Major))
+	    $(addprefix $(BUILD_DIR)/,$(Quote_Name) $(Quote_Full) $(Quote_Major)) test_app
 	@make -C $(PCE_Library_Dir) clean
 	@make -C $(TDQE_Dir) clean
 	@make -C $(ID_ENCLAVE_Dir) clean

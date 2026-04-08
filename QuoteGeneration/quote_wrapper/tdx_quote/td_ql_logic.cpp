@@ -25,12 +25,25 @@
     #define TEE_ATT_QUOTE_CONFIG_LIB_FILE_NAME _T("dcap_quoteprov.dll")
 #endif
 #define ECDSA_BLOB_LABEL "tdqe_data.blob"
+#define MLDSA_65_BLOB_LABEL "tdqe_data_mldsa_65.blob"
 
 
 #define MAX_CERT_DATA_SIZE (4098*3)
 #define MIN_CERT_DATA_SIZE (500)  // Chosen to be large enough to contain the native cert data types.
 
 static constexpr size_t kTdqePathBufferSize = MAX_PATH + 1;
+
+static const char* get_blob_label_for_algorithm(uint32_t algorithm_id)
+{
+    switch (algorithm_id)
+    {
+    case SGX_QL_ALG_MLDSA_65:
+        return MLDSA_65_BLOB_LABEL;
+    case SGX_QL_ALG_ECDSA_P256:
+    default:
+        return ECDSA_BLOB_LABEL;
+    }
+}
 
 typedef quote3_error_t (*sgx_get_quote_config_func_t)(const sgx_ql_pck_cert_id_t *p_pck_cert_id,
                                                       sgx_ql_config_t **pp_quote_config);
@@ -977,7 +990,7 @@ tee_att_error_t tee_att_config_t::certify_key(uint8_t *p_ecdsa_blob,
         SE_TRACE(SE_TRACE_NOTICE, "Certification done.  Store updated ECDSA blob to disk.\n");
         refqt_ret = write_persistent_data(p_ecdsa_blob,
                                           SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK,
-                                          ECDSA_BLOB_LABEL);
+                                          get_blob_label_for_algorithm(m_att_key_algorithm_id));
         if (refqt_ret != TEE_ATT_SUCCESS) {
             // This should not be a critical failure but a warning.  The ECDSA key is still in memory.
             SE_TRACE(SE_TRACE_WARNING, "Warning, unable to store resealed ECDSA blob to persistent storage.\n");
@@ -1032,6 +1045,22 @@ tee_att_error_t tee_att_config_t::certify_key(uint8_t *p_ecdsa_blob,
  *         or was already verified once.
  *
  */
+tee_att_error_t tee_att_config_t::init_quote(sgx_ql_cert_key_type_t certification_key_type,
+                                             sgx_target_info_t *p_qe_target_info,
+                                             bool refresh_att_key,
+                                             ref_sha256_hash_t *p_pub_key_id)
+{
+    switch (m_att_key_algorithm_id)
+    {
+    case SGX_QL_ALG_ECDSA_P256:
+        return ecdsa_init_quote(certification_key_type, p_qe_target_info, refresh_att_key, p_pub_key_id);
+    case SGX_QL_ALG_MLDSA_65:
+        return mldsa_init_quote(certification_key_type, p_qe_target_info, refresh_att_key, p_pub_key_id);
+    default:
+        return TEE_ATT_UNSUPPORTED_ATT_KEY_ID;
+    }
+}
+
 tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certification_key_type,
                                                sgx_target_info_t *p_qe_target_info,
                                                bool refresh_att_key,
@@ -1122,7 +1151,7 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
         SE_TRACE(SE_TRACE_NOTICE, "Read ECDSA blob.\n");
         refqt_ret = read_persistent_data((uint8_t*)m_ecdsa_blob,
                                          &blob_size_read,
-                                         ECDSA_BLOB_LABEL);
+                                         get_blob_label_for_algorithm(m_att_key_algorithm_id));
         if (TEE_ATT_SUCCESS != refqt_ret) {
             // Ignore errors since persistent storage is not required.  Blob in memory may still be OK so continue to try to verify the cached blob.
             SE_TRACE(SE_TRACE_WARNING, "ECDSA Blob doesn't exist is persistent storage.  Try to use the cached version.\n");
@@ -1175,7 +1204,7 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
             SE_TRACE(SE_TRACE_NOTICE, "ECDSA Blob was resealed. Store it disk.\n");
             refqt_ret = write_persistent_data((uint8_t *)m_ecdsa_blob,
                                               sizeof(m_ecdsa_blob),
-                                              ECDSA_BLOB_LABEL);
+                                              get_blob_label_for_algorithm(m_att_key_algorithm_id));
             if (refqt_ret != TEE_ATT_SUCCESS) {
                 // Don't need to error since the blob is still good in memory.
                 /// todo:  What is the best way to notify the requester that the blob was not stored to disk?
@@ -1404,6 +1433,7 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
                                  (uint32_t*)&tdqe_error,
                                  m_ecdsa_blob,
                                  SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK,
+                                 static_cast<uint32_t>(m_att_key_algorithm_id),
                                  &pce_target_info,
                                  &tdqe_report,
                                  &authentication_data[0],
@@ -1551,6 +1581,18 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
     return(refqt_ret);
 }
 
+tee_att_error_t tee_att_config_t::mldsa_init_quote(sgx_ql_cert_key_type_t certification_key_type,
+                                                   sgx_target_info_t *p_qe_target_info,
+                                                   bool refresh_att_key,
+                                                   ref_sha256_hash_t *p_pub_key_id)
+{
+    (void)certification_key_type;
+    (void)p_qe_target_info;
+    (void)refresh_att_key;
+    (void)p_pub_key_id;
+    return TEE_ATT_UNSUPPORTED_ATT_KEY_ID;
+}
+
 /**
 * This is the ECDSA-P256 specific init quote code.  The generic quote interfaces have been converted/reduced to the ECDSA specific inputs.
 * The method will return the required quote buffer size dependent on the certification key type.
@@ -1567,6 +1609,20 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
 * @return TEE_ATT_ATT_KEY_CERT_DATA_INVALID Quote certification data from the platform library is invalid.
 *
 */
+tee_att_error_t tee_att_config_t::get_quote_size(sgx_ql_cert_key_type_t certification_key_type,
+                                                 uint32_t* p_quote_size)
+{
+    switch (m_att_key_algorithm_id)
+    {
+    case SGX_QL_ALG_ECDSA_P256:
+        return ecdsa_get_quote_size(certification_key_type, p_quote_size);
+    case SGX_QL_ALG_MLDSA_65:
+        return mldsa_get_quote_size(certification_key_type, p_quote_size);
+    default:
+        return TEE_ATT_UNSUPPORTED_ATT_KEY_ID;
+    }
+}
+
 tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t certification_key_type,
                                                    uint32_t* p_quote_size)
 {
@@ -1613,7 +1669,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
     SE_TRACE(SE_TRACE_NOTICE, "Read ECDSA blob from persistent storage.\n");
     refqt_ret = read_persistent_data((uint8_t*)m_ecdsa_blob,
                                      &blob_size_read,
-                                     ECDSA_BLOB_LABEL);
+                                     get_blob_label_for_algorithm(m_att_key_algorithm_id));
     if (TEE_ATT_SUCCESS != refqt_ret) {
         // Ignore errors since persistent storage is not required.  Blob in memory may still be OK and continue to try to verify the cached blob.
         SE_TRACE(SE_TRACE_WARNING, "ECDSA Blob doesn't exist is persistent storage.  Try to use the cached version.\n");
@@ -1651,7 +1707,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
         SE_TRACE(SE_TRACE_NOTICE, "ECDSA Blob was resealed. Store it disk.\n");
         refqt_ret = write_persistent_data((uint8_t *)m_ecdsa_blob,
                                           sizeof(m_ecdsa_blob),
-                                          ECDSA_BLOB_LABEL);
+                                          get_blob_label_for_algorithm(m_att_key_algorithm_id));
 
         if (refqt_ret != TEE_ATT_SUCCESS) {
             // Don't need to error since the blob is still good in memory.
@@ -1755,6 +1811,14 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
     return(refqt_ret);
 }
 
+tee_att_error_t tee_att_config_t::mldsa_get_quote_size(sgx_ql_cert_key_type_t certification_key_type,
+                                                       uint32_t* p_quote_size)
+{
+    (void)certification_key_type;
+    (void)p_quote_size;
+    return TEE_ATT_UNSUPPORTED_ATT_KEY_ID;
+}
+
 /**
 * This is the ECDSA-P256 specific get quote code.  The generic quote interfaces have been converted/reduced to the ECDSA
 * specific inputs. The method will return the quote dependent on the certification key type.
@@ -1779,6 +1843,21 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
 * @return TDQE_ERROR_OUT_OF_MEMORY
 * @return SGX_ERROR_INVALID_PARAMETER
 */
+tee_att_error_t tee_att_config_t::get_quote(const sgx_report2_t *p_app_report,
+                                            uint8_t *p_quote,
+                                            uint32_t quote_size)
+{
+    switch (m_att_key_algorithm_id)
+    {
+    case SGX_QL_ALG_ECDSA_P256:
+        return ecdsa_get_quote(p_app_report, p_quote, quote_size);
+    case SGX_QL_ALG_MLDSA_65:
+        return mldsa_get_quote(p_app_report, p_quote, quote_size);
+    default:
+        return TEE_ATT_UNSUPPORTED_ATT_KEY_ID;
+    }
+}
+
 tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_report,
                                                   uint8_t *p_quote,
                                                   uint32_t quote_size) {
@@ -1826,7 +1905,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
     SE_TRACE(SE_TRACE_NOTICE, "Read ECDSA blob.\n");
     refqt_ret = read_persistent_data((uint8_t*)m_ecdsa_blob,
                                      &blob_size_read,
-                                     ECDSA_BLOB_LABEL);
+                                     get_blob_label_for_algorithm(m_att_key_algorithm_id));
     if (TEE_ATT_SUCCESS != refqt_ret) {
         // Ignore errors since persistent storage is not required.  Blob in memory may still be OK and continue to try to verify the cached blob.
         ///todo:  May want to have a library configuration option that requires persistent storage.  Then treat the
@@ -1865,7 +1944,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
         SE_TRACE(SE_TRACE_NOTICE, "ECDSA Blob was resealed. Store it disk.\n");
         refqt_ret = write_persistent_data((uint8_t *)m_ecdsa_blob,
                                           sizeof(m_ecdsa_blob),
-                                          ECDSA_BLOB_LABEL);
+                                          get_blob_label_for_algorithm(m_att_key_algorithm_id));
 
         if (refqt_ret != TEE_ATT_SUCCESS) {
             // Don't need to error since the blob is still good in memory.
@@ -1976,6 +2055,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
                            (uint32_t*)&tdqe_error,
                            (uint8_t*)m_ecdsa_blob,
                            (uint32_t)sizeof(m_ecdsa_blob),
+                           static_cast<uint32_t>(m_att_key_algorithm_id),
                            p_app_report,
                            NULL,
                            NULL,
@@ -2044,6 +2124,16 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
     return(refqt_ret);
 }
 
+tee_att_error_t tee_att_config_t::mldsa_get_quote(const sgx_report2_t *p_app_report,
+                                                  uint8_t *p_quote,
+                                                  uint32_t quote_size)
+{
+    (void)p_app_report;
+    (void)p_quote;
+    (void)quote_size;
+    return TEE_ATT_UNSUPPORTED_ATT_KEY_ID;
+}
+
 
 tee_att_error_t tee_att_config_t::get_platform_info(sgx_key_128bit_t* p_platform_id,
     sgx_cpu_svn_t* p_cpu_svn,
@@ -2055,7 +2145,7 @@ tee_att_error_t tee_att_config_t::get_platform_info(sgx_key_128bit_t* p_platform
     if ((p_cpu_svn || p_tdqe_isv_svn) && !m_tdqe_report_body) {
         sgx_target_info_t qe_target_info;
         ref_sha256_hash_t pub_key_id;
-        refqt_ret = ecdsa_init_quote(PPID_RSA3072_ENCRYPTED,
+        refqt_ret = init_quote(PPID_RSA3072_ENCRYPTED,
             &qe_target_info,
             false,
             &pub_key_id);

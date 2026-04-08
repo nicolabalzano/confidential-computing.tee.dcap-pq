@@ -75,6 +75,42 @@ extern const sgx_ql_att_key_id_t g_default_ecdsa_p256_att_key_id =
     SGX_QL_ALG_ECDSA_P256                                                                                // Supported QE3's algorithm_id
 };
 
+extern const sgx_ql_att_key_id_t g_default_mldsa_65_att_key_id =
+{
+    0,                                                                                                   // ID
+    0,                                                                                                   // Version
+    32,                                                                                                  // Number of bytes in MRSIGNER
+    { 0x8c, 0x4f, 0x57, 0x75, 0xd7, 0x96, 0x50, 0x3e, 0x96, 0x13, 0x7f, 0x77, 0xc6, 0x8a, 0x82, 0x9a,
+      0x00, 0x56, 0xac, 0x8d, 0xed, 0x70, 0x14, 0x0b, 0x08, 0x1b, 0x09, 0x44, 0x90, 0xc5, 0x7b, 0xff,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},   // Production TDQE's MRSIGNER
+    2,                                                                                                   // TDQE's Legacy Prod ID
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},   // QE's extended_prod_id
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},   // QE's family_id
+    SGX_QL_ALG_MLDSA_65                                                                                  // Supported QE3's algorithm_id
+};
+
+static bool is_supported_tdx_att_key_algorithm(uint32_t algorithm_id)
+{
+    return algorithm_id == SGX_QL_ALG_ECDSA_P256 ||
+           algorithm_id == SGX_QL_ALG_MLDSA_65;
+}
+
+static const sgx_ql_att_key_id_t* get_default_att_key_id_for_algorithm(uint32_t algorithm_id)
+{
+    switch (algorithm_id)
+    {
+    case SGX_QL_ALG_MLDSA_65:
+        return &g_default_mldsa_65_att_key_id;
+    case SGX_QL_ALG_ECDSA_P256:
+    default:
+        return &g_default_ecdsa_p256_att_key_id;
+    }
+}
+
 
 tee_att_error_t tee_att_create_context(const tee_att_att_key_id_t* p_att_key_id,
     const char* p_qe_path,
@@ -111,13 +147,15 @@ tee_att_error_t tee_att_create_context(const tee_att_att_key_id_t* p_att_key_id,
             {
                 return(TEE_ATT_UNSUPPORTED_ATT_KEY_ID);
             }
-            if (SGX_QL_ALG_ECDSA_P256 != p_att_key_id->base.algorithm_id)       //verify that the algoritm id is ECDSA
+            if (!is_supported_tdx_att_key_algorithm(p_att_key_id->base.algorithm_id))
             {
                 return(TEE_ATT_UNSUPPORTED_ATT_KEY_ID);
             }
         }
     }
     tee_att_config_t* p_context = new tee_att_config_t();
+    p_context->m_att_key_algorithm_id = p_att_key_id ? static_cast<sgx_ql_attestation_algorithm_id_t>(p_att_key_id->base.algorithm_id)
+                                                     : SGX_QL_ALG_ECDSA_P256;
 
     if (NULL != p_qe_path)
     {
@@ -185,7 +223,7 @@ tee_att_error_t tee_att_init_quote(const tee_att_config_t* p_context,
     // Choose the default certification key type supported by the reference.
     sgx_ql_cert_key_type_t certification_key_type = PPID_RSA3072_ENCRYPTED;
 
-    ret_val = const_cast<tee_att_config_t*>(p_context)->ecdsa_init_quote(certification_key_type, p_qe_target_info, refresh_att_key, (ref_sha256_hash_t *)p_pub_key_id);
+    ret_val = const_cast<tee_att_config_t*>(p_context)->init_quote(certification_key_type, p_qe_target_info, refresh_att_key, (ref_sha256_hash_t *)p_pub_key_id);
     if (TEE_ATT_SUCCESS != ret_val) {
         if ((ret_val < TEE_ATT_ERROR_MIN) ||
             (ret_val > TEE_ATT_ERROR_MAX))
@@ -286,7 +324,7 @@ tee_att_error_t tee_att_get_quote_size(const tee_att_config_t* p_context,
         return(TEE_ATT_ERROR_INVALID_PARAMETER);
     }
 
-    ret_val = const_cast<tee_att_config_t*>(p_context)->ecdsa_get_quote_size(certification_key_type, p_quote_size);
+    ret_val = const_cast<tee_att_config_t*>(p_context)->get_quote_size(certification_key_type, p_quote_size);
     if (TEE_ATT_SUCCESS != ret_val) {
         if ((ret_val < TEE_ATT_ERROR_MIN) ||
             (ret_val > TEE_ATT_ERROR_MAX))
@@ -372,7 +410,7 @@ tee_att_error_t tee_att_get_quote(const tee_att_config_t* p_context,    // confi
         return(TEE_ATT_ERROR_INVALID_PARAMETER);
     }
 
-    ret_val = const_cast<tee_att_config_t*>(p_context)->ecdsa_get_quote(
+    ret_val = const_cast<tee_att_config_t*>(p_context)->get_quote(
         (sgx_report2_t*)p_report, p_quote, quote_size);
     if (TEE_ATT_SUCCESS != ret_val) {
         if ((ret_val < TEE_ATT_ERROR_MIN) ||
@@ -475,8 +513,10 @@ tee_att_error_t tee_att_get_keyid(const tee_att_config_t* p_context,
         return TEE_ATT_ERROR_INVALID_PARAMETER;
 
     memset(p_att_key_id, 0, sizeof(tee_att_att_key_id_t));
+    const sgx_ql_att_key_id_t* p_default_att_key_id =
+        get_default_att_key_id_for_algorithm(p_context->m_att_key_algorithm_id);
     if (0  !=  memcpy_s(&p_att_key_id->base, sizeof(p_att_key_id->base),
-        &g_default_ecdsa_p256_att_key_id, sizeof(g_default_ecdsa_p256_att_key_id))) {
+        p_default_att_key_id, sizeof(*p_default_att_key_id))) {
         return TEE_ATT_ERROR_UNEXPECTED;
     }
     return TEE_ATT_SUCCESS;

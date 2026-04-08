@@ -51,8 +51,12 @@ typedef enum {
     SGX_QL_ALG_RESERVED_1 = 1, ///< Reserved
     SGX_QL_ALG_ECDSA_P256 = 2, ///< ECDSA-256-with-P-256 curve, Non - Anonymous
     SGX_QL_ALG_ECDSA_P384 = 3, ///< ECDSA-384-with-P-384 curve (Note: currently not supported), Non-Anonymous
-    SGX_QL_ALG_MAX = 4
+    SGX_QL_ALG_MLDSA_65 = 5,  ///< ML-DSA-65 (Dilithium3-level) signature, Non-Anonymous
+    SGX_QL_ALG_MAX = 6,
 } sgx_ql_attestation_algorithm_id_t;
+
+#define SGX_QL_MLDSA_65_SIG_SIZE 3309
+#define SGX_QL_MLDSA_65_PUB_KEY_SIZE 1952
 
 /** Enumerates the different certification data types used to describe the signer of the attestation key */
 typedef enum {
@@ -161,6 +165,23 @@ typedef struct _sgx_ql_ecdsa_sig_data_t {
 #endif
 } sgx_ql_ecdsa_sig_data_t;
 
+/** The SGX_QL_ALG_MLDSA_65 specific data structure. Appears in the signature_data[] of the sgx_quote3_t
+ *  structure. */
+typedef struct _sgx_ql_mldsa_65_sig_data_t {
+    uint8_t               sig[SGX_QL_MLDSA_65_SIG_SIZE];                ///< Signature over the Quote using the ML-DSA-65 Att key.
+    uint8_t               attest_pub_key[SGX_QL_MLDSA_65_PUB_KEY_SIZE]; ///< ML-DSA-65 Att Public Key. Hash in QE3Report.ReportData.
+    sgx_report_body_t     qe_report;                                    ///< QE3 Report of the QE when the Att key was generated.
+    uint8_t               qe_report_sig[32*2];                          ///< Signature of QE Report using the Certification Key (PCK for root signing). Big Endian
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning ( disable:4200 )
+#endif
+    uint8_t               auth_certification_data[];                    ///< Place holder for both the auth_data_t and certification_data_t. Concatenated in that order.
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+} sgx_ql_mldsa_65_sig_data_t;
+
 /** The quote header.  It is designed to compatible with earlier versions of the quote. */
 typedef struct _sgx_quote_header_t {
     uint16_t            version;             ///< 0:  The version this quote structure.
@@ -191,4 +212,3 @@ typedef struct _sgx_quote3_t {
 #pragma pack(pop)
 
 #endif //_SGX_QUOTE_3_H_
-

@@ -108,6 +108,19 @@ typedef struct _sgx_ecdsa_sig_data_v4_t {
 #endif
 } sgx_ecdsa_sig_data_v4_t;
 
+typedef struct _sgx_mldsa_65_sig_data_v4_t {
+     uint8_t             sig[SGX_QL_MLDSA_65_SIG_SIZE];               ///< Signature over the Quote using the ML-DSA-65 Att key.
+     uint8_t             attest_pub_key[SGX_QL_MLDSA_65_PUB_KEY_SIZE];///< ML-DSA-65 Att Public Key. Hash in QE Report.ReportData.
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning ( disable:4200 )
+#endif
+     uint8_t             certification_data[];                        ///< Certification data associated with the cert_key_type
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+} sgx_mldsa_65_sig_data_v4_t;
+
 /** The quote header.  It is designed to compatible with earlier versions of the quote. */
 typedef struct _sgx_quote4_header_t {
     uint16_t            version;              ///< 0:  The version this quote structure.

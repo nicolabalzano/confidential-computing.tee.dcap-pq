@@ -774,6 +774,7 @@ ret_point:
  */
 uint32_t gen_att_key(uint8_t *p_blob,
     uint32_t blob_size,
+    uint32_t algorithm_id,
     const sgx_target_info_t *p_pce_target_info,
     sgx_report_t *p_tdqe_report,
     uint8_t *p_authentication_data,
@@ -815,6 +816,10 @@ uint32_t gen_att_key(uint8_t *p_blob,
         (NULL == p_pce_target_info) ||
         (NULL == p_tdqe_report))
         return(TDQE_ERROR_INVALID_PARAMETER);
+
+    if (algorithm_id != SGX_QL_ALG_ECDSA_P256) {
+        return(TDQE_ERROR_INVALID_PARAMETER);
+    }
 
     if (SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK != blob_size) {
         return(TDQE_ERROR_INVALID_PARAMETER);
@@ -1353,6 +1358,7 @@ static tdqe_error_t determine_quote_version(const sgx_report2_t *p_td_report,
  */
 uint32_t gen_quote(uint8_t *p_blob,
     uint32_t blob_size,
+    uint32_t algorithm_id,
     const sgx_report2_t *p_td_report,
     const sgx_quote_nonce_t *p_nonce,
     const sgx_target_info_t *p_app_enclave_target_info,
@@ -1424,6 +1430,9 @@ uint32_t gen_quote(uint8_t *p_blob,
         (NULL == p_td_report) ||
         (NULL == p_quote_buf) ||
         (!quote_size)) {
+        return(TDQE_ERROR_INVALID_PARAMETER);
+    }
+    if (algorithm_id != SGX_QL_ALG_ECDSA_P256) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
     if (SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK != blob_size) {

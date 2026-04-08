@@ -46,6 +46,7 @@ trusted {
 
     public uint32_t gen_att_key([size = blob_size, in, out] uint8_t *p_blob,
                                 uint32_t blob_size,
+                                uint32_t algorithm_id,
                                 [in]const sgx_target_info_t *p_pce_target_info,
                                 [out] sgx_report_t *qe_report,
                                 [in, size = authentication_data_size] uint8_t* p_authentication_data,
@@ -67,6 +68,7 @@ trusted {
 
     public uint32_t gen_quote([size = blob_size, in, out] uint8_t *p_blob,
                               uint32_t blob_size,
+                              uint32_t algorithm_id,
                               [in] const sgx_report2_t *p_app_report,
                               [in] const sgx_quote_nonce_t *p_nonce,
                               [in] const sgx_target_info_t *p_app_enclave_target_info,

@@ -1814,9 +1814,29 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
 tee_att_error_t tee_att_config_t::mldsa_get_quote_size(sgx_ql_cert_key_type_t certification_key_type,
                                                        uint32_t* p_quote_size)
 {
-    (void)certification_key_type;
-    (void)p_quote_size;
-    return TEE_ATT_UNSUPPORTED_ATT_KEY_ID;
+    if (PPID_RSA3072_ENCRYPTED != certification_key_type) {
+        SE_TRACE(SE_TRACE_ERROR, "Invalid certification key type.");
+        return(TEE_ATT_ERROR_INVALID_PARAMETER);
+    }
+
+    if (NULL == p_quote_size) {
+        SE_TRACE(SE_TRACE_ERROR, "p_quote_size is NULL.");
+        return(TEE_ATT_ERROR_INVALID_PARAMETER);
+    }
+
+    *p_quote_size = sizeof(sgx_quote5_t) +                // quote body
+                    sizeof(sgx_report2_body_v1_5_ex_t) +     // copy from TD Report for TDX 1.5 type 4
+                    sizeof(uint32_t) +                    // Field for Auth Data size
+                    sizeof(sgx_mldsa_65_sig_data_v4_t) +  // signature
+                    sizeof(sgx_ql_certification_data_t) + // cert_key_type == ECDSA_SIG_AUX_DATA
+                    sizeof(sgx_qe_report_certification_data_t) +
+                    sizeof(sgx_ql_auth_data_t) +
+                    REF_ECDSDA_AUTHENTICATION_DATA_SIZE +  // Authentication data
+                    sizeof(sgx_ql_certification_data_t) + // cert_key_type == PPID_RSA3072_ENCRYPTED
+                    sizeof(sgx_ql_ppid_rsa3072_encrypted_cert_info_t);
+    SE_PROD_LOG("[tdx-quote-debug] mldsa_get_quote_size: quote_size=%u (default certification data path only).\n",
+                *p_quote_size);
+    return TEE_ATT_SUCCESS;
 }
 
 /**

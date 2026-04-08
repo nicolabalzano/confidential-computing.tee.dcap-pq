@@ -234,6 +234,9 @@ tee_att_error_t tee_att_init_quote(const tee_att_config_t* p_context,
             // Translate TDQE errors
             switch (tdqe_error)
             {
+            case TDQE_ERROR_UNSUPPORTED_ATT_KEY_ID:
+                ret_val = TEE_ATT_UNSUPPORTED_ATT_KEY_ID;
+                break;
             case TDQE_ERROR_INVALID_PARAMETER:
                 ret_val = TEE_ATT_ERROR_INVALID_PARAMETER;
                 break;
@@ -422,6 +425,9 @@ tee_att_error_t tee_att_get_quote(const tee_att_config_t* p_context,    // confi
             // Translate TDQE errors
             switch (tdqe_error)
             {
+            case TDQE_ERROR_UNSUPPORTED_ATT_KEY_ID:
+                ret_val = TEE_ATT_UNSUPPORTED_ATT_KEY_ID;
+                break;
             case TDQE_ERROR_INVALID_PARAMETER:
                 ret_val = TEE_ATT_ERROR_INVALID_PARAMETER;
                 break;

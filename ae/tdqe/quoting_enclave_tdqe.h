@@ -66,6 +66,7 @@ typedef enum _tdqe_error_t {
     TDQE_ERROR_INVALID_HASH           = TDQE_MK_ERROR(0x000A),      ///< The tee_tcb_info_hash or tee_tcb_info_hash is invalid.
     TDQE_ERROR_INVALID_PLATFORM       = TDQE_MK_ERROR(0x000B),      ///< This QE cannot be used on this platform
     TDQE_REPORT_FORMAT_NOT_SUPPORTED  = TDQE_MK_ERROR(0x000C),      ///< This TD report is not compatible with this QE
+    TDQE_ERROR_UNSUPPORTED_ATT_KEY_ID = TDQE_MK_ERROR(0x000D),      ///< The selected attestation key algorithm is not supported by this TDQE
 } tdqe_error_t;
 
 #pragma pack(push, 1)

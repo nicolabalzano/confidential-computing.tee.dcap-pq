@@ -42,7 +42,7 @@
 #include <string.h>
 
 #include "sgx_quote.h"
-#include "sgx_quote_5.h"
+#include "../../QuoteGeneration/quote_wrapper/common/inc/sgx_quote_5.h"
 #include "sgx_tseal.h"
 #include "sgx_utils.h"
 #include "tdqe_t.c"
@@ -135,6 +135,34 @@ static bool is_verify_report2_available() {
     return false;
   }
   return true;
+}
+
+static bool is_supported_att_key_algorithm(uint32_t algorithm_id)
+{
+    return algorithm_id == SGX_QL_ALG_ECDSA_P256 ||
+           algorithm_id == SGX_QL_ALG_MLDSA_65;
+}
+
+static uint32_t get_quote_sig_data_struct_size(uint32_t algorithm_id)
+{
+    switch (algorithm_id) {
+    case SGX_QL_ALG_MLDSA_65:
+        return (uint32_t)sizeof(sgx_mldsa_65_sig_data_v4_t);
+    case SGX_QL_ALG_ECDSA_P256:
+    default:
+        return (uint32_t)sizeof(sgx_ecdsa_sig_data_v4_t);
+    }
+}
+
+static uint32_t get_quote_signature_size(uint32_t algorithm_id)
+{
+    switch (algorithm_id) {
+    case SGX_QL_ALG_MLDSA_65:
+        return SGX_QL_MLDSA_65_SIG_SIZE;
+    case SGX_QL_ALG_ECDSA_P256:
+    default:
+        return (uint32_t)sizeof(sgx_ec256_signature_t);
+    }
 }
 
 /**
@@ -818,7 +846,7 @@ uint32_t gen_att_key(uint8_t *p_blob,
         return(TDQE_ERROR_INVALID_PARAMETER);
 
     if (algorithm_id != SGX_QL_ALG_ECDSA_P256) {
-        return(TDQE_ERROR_INVALID_PARAMETER);
+        return(TDQE_ERROR_UNSUPPORTED_ATT_KEY_ID);
     }
 
     if (SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK != blob_size) {
@@ -1371,7 +1399,6 @@ uint32_t gen_quote(uint8_t *p_blob,
     tdqe_error_t ret = TDQE_SUCCESS;
     sgx_quote4_t *p_quote;
     sgx_quote5_t *p_quote_v5;
-    sgx_ecdsa_sig_data_v4_t *p_quote_sig;
     uint32_t *p_sig_len;
     sgx_ql_certification_data_t *p_qe_report_cert_header;
     sgx_qe_report_certification_data_t *p_qe_report_cert_data;
@@ -1420,6 +1447,9 @@ uint32_t gen_quote(uint8_t *p_blob,
     sgx_report_data_t qe_report_data;
     sgx_ec256_public_t le_att_pub_key;
     uint32_t sign_buf_size;
+    uint8_t *p_quote_sig = NULL;
+    uint8_t *p_quote_sig_certification_data = NULL;
+    uint8_t *p_quote_sig_pub_key = NULL;
     uint8_t verify_result = SGX_EC_INVALID_SIGNATURE;
 
     memset(&plaintext, 0, sizeof(plaintext));
@@ -1432,8 +1462,8 @@ uint32_t gen_quote(uint8_t *p_blob,
         (!quote_size)) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
-    if (algorithm_id != SGX_QL_ALG_ECDSA_P256) {
-        return(TDQE_ERROR_INVALID_PARAMETER);
+    if (!is_supported_att_key_algorithm(algorithm_id)) {
+        return(TDQE_ERROR_UNSUPPORTED_ATT_KEY_ID);
     }
     if (SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK != blob_size) {
         return(TDQE_ERROR_INVALID_PARAMETER);
@@ -1561,7 +1591,7 @@ uint32_t gen_quote(uint8_t *p_blob,
         goto ret_point;
     }
 
-    sign_size = sizeof(sgx_ecdsa_sig_data_v4_t) +           // ECDSA sig data structure
+    sign_size = get_quote_sig_data_struct_size(algorithm_id) + // Attestation algorithm specific signature data structure
         sizeof(sgx_ql_auth_data_t) +
         sizeof(sgx_ql_certification_data_t) +               // We added sgx_qe_report_certification_data_t in version 4
         sizeof(sgx_qe_report_certification_data_t) +
@@ -1632,22 +1662,33 @@ uint32_t gen_quote(uint8_t *p_blob,
     if (gen_v5_quote) {
         if (tdid_present || vmid_present) {
             p_sig_len = (uint32_t *)(p_quote_v5->body + sizeof(sgx_report2_body_v1_5_ex_t));
-            p_quote_sig = (sgx_ecdsa_sig_data_v4_t *)(p_quote_v5->body + sizeof(sgx_report2_body_v1_5_ex_t) + sizeof(uint32_t));
+            p_quote_sig = (uint8_t *)(p_quote_v5->body + sizeof(sgx_report2_body_v1_5_ex_t) + sizeof(uint32_t));
         } else {
             p_sig_len = (uint32_t *)(p_quote_v5->body + sizeof(sgx_report2_body_v1_5_t));
-            p_quote_sig = (sgx_ecdsa_sig_data_v4_t *)(p_quote_v5->body + sizeof(sgx_report2_body_v1_5_t) + sizeof(uint32_t));
+            p_quote_sig = (uint8_t *)(p_quote_v5->body + sizeof(sgx_report2_body_v1_5_t) + sizeof(uint32_t));
         }
     } else { // v4 quote
         p_sig_len = &p_quote->signature_data_len;
-        p_quote_sig = (sgx_ecdsa_sig_data_v4_t *)(p_quote->signature_data);
+        p_quote_sig = (uint8_t *)(p_quote->signature_data);
+    }
+    switch (algorithm_id) {
+    case SGX_QL_ALG_MLDSA_65:
+        p_quote_sig_pub_key = reinterpret_cast<sgx_mldsa_65_sig_data_v4_t *>(p_quote_sig)->attest_pub_key;
+        p_quote_sig_certification_data = reinterpret_cast<sgx_mldsa_65_sig_data_v4_t *>(p_quote_sig)->certification_data;
+        break;
+    case SGX_QL_ALG_ECDSA_P256:
+    default:
+        p_quote_sig_pub_key = reinterpret_cast<sgx_ecdsa_sig_data_v4_t *>(p_quote_sig)->attest_pub_key;
+        p_quote_sig_certification_data = reinterpret_cast<sgx_ecdsa_sig_data_v4_t *>(p_quote_sig)->certification_data;
+        break;
     }
     *p_sig_len = sign_size;
 
-    p_qe_report_cert_header = ((sgx_ql_certification_data_t *)(p_quote_sig->certification_data));
+    p_qe_report_cert_header = ((sgx_ql_certification_data_t *)(p_quote_sig_certification_data));
     p_qe_report_cert_data = (sgx_qe_report_certification_data_t *)(p_qe_report_cert_header->certification_data);
     p_qe_report_cert_header->cert_key_type = ECDSA_SIG_AUX_DATA;
 
-    p_auth_data = (sgx_ql_auth_data_t *)(p_quote_sig->certification_data + sizeof(sgx_ql_certification_data_t) + sizeof(sgx_qe_report_certification_data_t));
+    p_auth_data = (sgx_ql_auth_data_t *)(p_quote_sig_certification_data + sizeof(sgx_ql_certification_data_t) + sizeof(sgx_qe_report_certification_data_t));
     p_auth_data->size = (uint16_t)plaintext.authentication_data_size;
 
     // write initial size for p_qe_report_cert_header->size, will add remain part later.
@@ -1661,7 +1702,7 @@ uint32_t gen_quote(uint8_t *p_blob,
 
     // Populate the quote buffer.
     // Set up the header.
-    p_quote->header.att_key_type = SGX_QL_ALG_ECDSA_P256;
+    p_quote->header.att_key_type = (uint16_t)algorithm_id;
     p_quote->header.tee_type = 0x81; // TEE for this attestation, little endian 0x81 means TDX
     // Sizes of user_data and qe_id were checked above.  If here, then sizes are OK without overflow.
 
@@ -1773,6 +1814,10 @@ uint32_t gen_quote(uint8_t *p_blob,
         }
         goto ret_point;
     }
+    if (algorithm_id != SGX_QL_ALG_ECDSA_P256) {
+        ret = TDQE_ERROR_UNSUPPORTED_ATT_KEY_ID;
+        goto ret_point;
+    }
     // Generate the quote signature.
     sgx_status = sgx_ecc256_open_context(&handle);
     if (SGX_ERROR_OUT_OF_MEMORY == sgx_status) {
@@ -1788,7 +1833,7 @@ uint32_t gen_quote(uint8_t *p_blob,
     sgx_status = sgx_ecdsa_sign(p_quote_buf,
         sign_buf_size,
         &pciphertext->ecdsa_private_key,
-        reinterpret_cast<sgx_ec256_signature_t *>(p_quote_sig->sig),
+        reinterpret_cast<sgx_ec256_signature_t *>(p_quote_sig),
         handle);
     if (SGX_ERROR_OUT_OF_MEMORY == sgx_status) {
         ret = TDQE_ERROR_OUT_OF_MEMORY;
@@ -1808,13 +1853,13 @@ uint32_t gen_quote(uint8_t *p_blob,
     sgx_status = sgx_ecdsa_verify(p_quote_buf,
         sign_buf_size,
         &le_att_pub_key,
-        reinterpret_cast<sgx_ec256_signature_t *>(p_quote_sig->sig),
+        reinterpret_cast<sgx_ec256_signature_t *>(p_quote_sig),
         &verify_result,
         handle);
     if (SGX_SUCCESS != sgx_status || SGX_EC_VALID != verify_result) {
-        if (SGX_SUCCESS != sgx_read_rand((unsigned char*)p_quote_sig->sig,
-            sizeof(sgx_ec256_signature_t)))
-            memset(p_quote_sig->sig, 0, sizeof(sgx_ec256_signature_t));
+        if (SGX_SUCCESS != sgx_read_rand((unsigned char*)p_quote_sig,
+            get_quote_signature_size(algorithm_id)))
+            memset(p_quote_sig, 0, get_quote_signature_size(algorithm_id));
         ret = TDQE_ERROR_UNEXPECTED;
         goto ret_point;
     }
@@ -1824,18 +1869,18 @@ uint32_t gen_quote(uint8_t *p_blob,
         size_t i;
         uint8_t swap;
         for (i = 0; i < 32 / 2; i++) {
-            swap = p_quote_sig->sig[i];
-            p_quote_sig->sig[i] = p_quote_sig->sig[32 - 1 - i];
-            p_quote_sig->sig[32 - 1 - i] = swap;
+            swap = p_quote_sig[i];
+            p_quote_sig[i] = p_quote_sig[32 - 1 - i];
+            p_quote_sig[32 - 1 - i] = swap;
         }
         for (i = 0; i < 32 / 2; i++) {
-            swap = p_quote_sig->sig[32 + i];
-            p_quote_sig->sig[32 + i] = p_quote_sig->sig[64 - 1 - i];
-            p_quote_sig->sig[64 - 1 - i] = swap;
+            swap = p_quote_sig[32 + i];
+            p_quote_sig[32 + i] = p_quote_sig[64 - 1 - i];
+            p_quote_sig[64 - 1 - i] = swap;
         }
     }
     // Add the public part of the ECDSA key to the quote sig data.  Store it in Big Endian
-    memcpy(p_quote_sig->attest_pub_key, &plaintext.ecdsa_att_public_key, sizeof(p_quote_sig->attest_pub_key));
+    memcpy(p_quote_sig_pub_key, &plaintext.ecdsa_att_public_key, sizeof(plaintext.ecdsa_att_public_key));
 
     // Add the QE Report to the Quote QE report certification data (the qe report when it was signed by the PCE!).
     memcpy(&(p_qe_report_cert_data->qe_report), &plaintext.qe_report.body, sizeof(p_qe_report_cert_data->qe_report));

@@ -23,15 +23,18 @@ INCLUDE := -I$(SGX_SDK)/include							\
 		   -I$(TOP_DIR)/../ae/dep/inc/internal			\
            -I$(TOP_DIR)/quote_wrapper/common/inc		\
            -I$(TOP_DIR)/pce_wrapper/inc					\
+           -I$(TOP_DIR)/../ae/pq/mldsa-native/mldsa		\
+           -I$(TOP_DIR)/../ae/pq/mldsa-native/mldsa/src	\
            -I..											\
            -I.
 
 EXTERNAL_LIB = $(EXTERNAL_LIB_NO_CRYPTO) -lsgx_tcxx -l$(TCRYPTO_LIB_NAME)
 
 vpath %.cpp .. .
-SRC := quoting_enclave_tdqe.cpp
+CPP_SRC := quoting_enclave_tdqe.cpp
+C_SRC := tdqe_mldsa_adapter.c mldsa_native.c
 
-OBJ := $(SRC:.cpp=.o)
+OBJ := $(CPP_SRC:.cpp=.o) $(C_SRC:.c=.o)
 OBJS := $(sort $(OBJ) version.o)
 
 .PHONY: all
@@ -49,6 +52,12 @@ quoting_enclave_tdqe.o: $(AENAME)_t.c
 
 %.o:%.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDE) $(DEFINES) -fno-exceptions -c $< -o $@
+
+tdqe_mldsa_adapter.o: ../tdqe_mldsa_adapter.c
+	$(CC) $(CFLAGS) $(INCLUDE) $(DEFINES) -c $< -o $@
+
+mldsa_native.o: $(TOP_DIR)/../ae/pq/mldsa-native/mldsa/mldsa_native.c
+	$(CC) $(CFLAGS) $(INCLUDE) $(DEFINES) -U__CET__ -c $< -o $@
 
 $(AENAME)_t.c: ../$(AENAME).edl
 	@$(SGX_EDGER8R) --trusted $<

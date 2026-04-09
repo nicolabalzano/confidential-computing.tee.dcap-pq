@@ -14,6 +14,7 @@ QGS_OBJS = $(patsubst %.c,%.o,$(patsubst %.cc,%.o,$(patsubst %.cpp,%.o,$(QGS_SRC
 QGS_INC = -I$(SGX_SDK)/include \
 		  -I$(COMMON_DIR)/inc/internal \
 		  -I$(TOP_DIR)/qpl/inc \
+		  -I$(TOP_DIR)/quote_wrapper/tdx_attest \
 		  -I$(TOP_DIR)/quote_wrapper/tdx_quote/inc \
 		  -I$(TOP_DIR)/quote_wrapper/qgs_msg_lib/inc
 QGS_CFLAGS = -g -MMD -Werror $(CFLAGS) $(QGS_INC)

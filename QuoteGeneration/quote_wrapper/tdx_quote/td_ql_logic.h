@@ -55,6 +55,11 @@
 
 #define MAX_PATH 260
 
+enum tee_att_bootstrap_mode_t {
+    TEE_ATT_BOOTSTRAP_LEGACY_PCE = 0,
+    TEE_ATT_BOOTSTRAP_TRUSTED_TDX_ONLY = 1,
+};
+
  /**
   * Used to keep track of the TDQE's load status.  Allows for
   * thread safe updating of the load policy and the storage of
@@ -69,7 +74,7 @@ private:
     sgx_enclave_id_t m_eid;
     sgx_misc_attribute_t m_attributes;
     sgx_launch_token_t m_launch_token;
-    uint8_t m_ecdsa_blob[SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK];
+    uint8_t m_ecdsa_blob[SGX_QL_TRUSTED_MAX_BLOB_SIZE_SDK];
     uint8_t* m_pencryptedppid;
     sgx_pce_info_t m_pce_info;
     sgx_key_128bit_t* m_qe_id;
@@ -83,6 +88,7 @@ private:
     sgx_report_body_t* m_tdqe_report_body;
 public:
     sgx_ql_attestation_algorithm_id_t m_att_key_algorithm_id;
+    tee_att_bootstrap_mode_t m_bootstrap_mode;
     TCHAR tdqe_path[MAX_PATH];
     TCHAR qpl_path[MAX_PATH];
     TCHAR ide_path[MAX_PATH];
@@ -94,7 +100,8 @@ public:
         m_raw_pce_isvsvn(0xFFFF),
         m_qpl_handle(NULL),
         m_tdqe_report_body(NULL),
-        m_att_key_algorithm_id(SGX_QL_ALG_ECDSA_P256)
+        m_att_key_algorithm_id(SGX_QL_ALG_ECDSA_P256),
+        m_bootstrap_mode(TEE_ATT_BOOTSTRAP_LEGACY_PCE)
     {
         se_mutex_init(&m_enclave_load_mutex);
         se_mutex_init(&m_ecdsa_blob_mutex);
@@ -146,6 +153,14 @@ public:
         sgx_target_info_t* p_qe_target_info,
         bool refresh_att_key,
         ref_sha256_hash_t* p_pub_key_id);
+    tee_att_error_t legacy_init_quote(sgx_ql_cert_key_type_t certification_key_type,
+        sgx_target_info_t* p_qe_target_info,
+        bool refresh_att_key,
+        ref_sha256_hash_t* p_pub_key_id);
+    tee_att_error_t trusted_tdx_only_init_quote(sgx_ql_cert_key_type_t certification_key_type,
+        sgx_target_info_t* p_qe_target_info,
+        bool refresh_att_key,
+        ref_sha256_hash_t* p_pub_key_id);
 
     tee_att_error_t init_quote(sgx_ql_cert_key_type_t certification_key_type,
         sgx_target_info_t* p_qe_target_info,
@@ -181,6 +196,19 @@ public:
     get_qpl_handle();
 
   private:
+    bool uses_legacy_pce_bootstrap() const;
+    tee_att_error_t validate_legacy_certification_key_type(sgx_ql_cert_key_type_t certification_key_type) const;
+    tee_att_error_t legacy_get_pce_target_info(sgx_target_info_t* p_pce_target_info,
+        sgx_isv_svn_t* p_pce_isv_svn);
+    tee_att_error_t legacy_pce_sign_report(const sgx_isv_svn_t* p_cert_pce_isv_svn,
+        const sgx_cpu_svn_t* p_cert_cpu_svn,
+        const sgx_report_t* p_qe_report,
+        sgx_ec256_signature_t* p_pce_sig);
+    tee_att_error_t legacy_get_platform_quote_cert_data(sgx_ql_pck_cert_id_t* p_pck_cert_id,
+        sgx_cpu_svn_t* p_cert_cpu_svn,
+        sgx_isv_svn_t* p_cert_pce_isv_svn,
+        uint32_t* p_cert_data_size,
+        uint8_t* p_cert_data);
     bool get_qe_path(tee_att_ae_type_t type,
         TCHAR* p_file_path,
         size_t buf_size);
@@ -196,7 +224,8 @@ public:
         uint32_t* p_buf_size,
         const char* p_label);
     tee_att_error_t certify_key(uint8_t* p_ecdsa_blob,
-        ref_plaintext_ecdsa_data_sdk_t* p_plaintext_data,
+        uint8_t* p_plaintext_data,
+        uint32_t plaintext_data_size,
         uint8_t* p_encrypted_ppid,
         uint32_t encrypted_ppid_size,
         sgx_ql_cert_key_type_t certification_key_type);

@@ -26,14 +26,18 @@
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <syslog.h>
 #include <unistd.h>
 
 #define TDX_ATTEST_DEV_PATH "/dev/tdx_guest"
 #define CFG_FILE_PATH "/etc/tdx-attest.conf"
 #define DCAP_TDX_QUOTE_CONFIGFS_PATH_ENV "DCAP_TDX_QUOTE_CONFIGFS_PATH"
+#define TDX_ATTEST_LOCAL_QGS_SOCKET_ENV "TDX_ATTEST_LOCAL_QGS_SOCKET"
+#define TDX_ATTEST_FORCE_LOCAL_QGS_ENV "TDX_ATTEST_FORCE_LOCAL_QGS"
 #define QUOTE_CONFIGFS_PATH "/sys/kernel/config/tsm/report"
 #define DEFAULT_DCAP_TDX_QUOTE_CONFIGFS_PATH QUOTE_CONFIGFS_PATH"/com.intel.dcap"
+#define DEFAULT_TDX_ATTEST_LOCAL_QGS_SOCKET "/var/run/tdx-qgs/qgs.socket"
 
 #define DCAP_TDX_RTMR_SYSFS_PATH_ENV "DCAP_TDX_RTMR_SYSFS_PATH"
 #define DEFAULT_DCAP_TDX_RTMR_SYSFS_PATH "/sys/class/misc/tdx_guest/measurements"
@@ -108,7 +112,66 @@ static const size_t QUOTE_MIN_SIZE = 1020;
 static const unsigned MAX_PORT_NUMBER = 0xFFFF; // accepted port range 0..65535 (0xFFFF)
 static const unsigned WRONG_PORT_NUMBER = MAX_PORT_NUMBER + 1;
 
-static const tdx_uuid_t g_intel_tdqe_uuid = {TDX_SGX_ECDSA_ATTESTATION_ID};
+static const tdx_uuid_t g_intel_tdqe_ecdsa_uuid = {TDX_SGX_ECDSA_ATTESTATION_ID};
+static const tdx_uuid_t g_intel_tdqe_mldsa_65_uuid = {TDX_SGX_MLDSA_65_ATTESTATION_ID};
+
+static int direct_trace_enabled(void)
+{
+    const char *value = secure_getenv("TDX_ATTEST_TRACE_DIRECT");
+    return value != NULL && value[0] != '\0' && value[0] != '0';
+}
+
+static void trace_uuid_bytes(const char *label, const uint8_t *bytes, size_t size)
+{
+    if (!direct_trace_enabled()) {
+        return;
+    }
+    fprintf(stderr, "[tdx-attest-trace] %s", label);
+    if (bytes == NULL) {
+        fprintf(stderr, "<null>\n");
+        return;
+    }
+    for (size_t i = 0; i < size; ++i) {
+        fprintf(stderr, "%02x", bytes[i]);
+    }
+    fprintf(stderr, "\n");
+}
+
+static void trace_uuid_list(const char *label, const tdx_uuid_t *p_att_key_id_list, uint32_t list_size)
+{
+    if (!direct_trace_enabled()) {
+        return;
+    }
+    fprintf(stderr, "[tdx-attest-trace] %s count=%u\n", label, list_size);
+    if (p_att_key_id_list == NULL) {
+        return;
+    }
+    for (uint32_t i = 0; i < list_size; ++i) {
+        fprintf(stderr, "[tdx-attest-trace]   id[%u]=", i);
+        for (size_t j = 0; j < sizeof(p_att_key_id_list[i].d); ++j) {
+            fprintf(stderr, "%02x", p_att_key_id_list[i].d[j]);
+        }
+        fprintf(stderr, "\n");
+    }
+}
+
+static int local_qgs_forced(void)
+{
+    const char *value = secure_getenv(TDX_ATTEST_FORCE_LOCAL_QGS_ENV);
+    return value != NULL && value[0] != '\0' && value[0] != '0';
+}
+
+static const char *get_local_qgs_socket_path(void)
+{
+    const char *value = secure_getenv(TDX_ATTEST_LOCAL_QGS_SOCKET_ENV);
+    if (value != NULL && value[0] != '\0') {
+        return value;
+    }
+    if (local_qgs_forced()) {
+        return DEFAULT_TDX_ATTEST_LOCAL_QGS_SOCKET;
+    }
+    return NULL;
+}
 
 static unsigned int get_vsock_port(void)
 {
@@ -568,13 +631,24 @@ static tdx_attest_error_t configfs_get_quote(
 
 static tdx_attest_error_t generate_get_quote_blob(
     const tdx_report_t *p_tdx_report,
+    const tdx_uuid_t *p_att_key_id_list,
+    uint32_t list_size,
     struct tdx_quote_hdr *p_get_quote_blob)
 {
     uint32_t msg_size = 0;
     qgs_msg_error_t qgs_msg_ret = QGS_MSG_SUCCESS;
     uint8_t *p_req = NULL;
+    const uint8_t *p_id_list = NULL;
+    uint32_t id_list_size = 0;
+
+    if (p_att_key_id_list && list_size) {
+        p_id_list = (const uint8_t *)p_att_key_id_list;
+        id_list_size = list_size * (uint32_t)sizeof(tdx_uuid_t);
+    }
+    trace_uuid_list("generate_get_quote_blob request att key ids", p_att_key_id_list, list_size);
+
     qgs_msg_ret = qgs_msg_gen_get_quote_req((uint8_t*)p_tdx_report, sizeof(*p_tdx_report),
-        NULL, 0, &p_req, &msg_size);
+        p_id_list, id_list_size, &p_req, &msg_size);
     if (QGS_MSG_SUCCESS != qgs_msg_ret) {
 #ifdef DEBUG
         fprintf(stdout, "\nqgs_msg_gen_get_quote_req return 0x%x\n", qgs_msg_ret);
@@ -610,6 +684,7 @@ static tdx_attest_error_t generate_get_quote_blob(
 static tdx_attest_error_t extract_quote_from_blob_payload(
     uint8_t* p_blob_payload,
     uint32_t payload_body_size,
+    tdx_uuid_t *p_selected_att_key_id,
     uint8_t **pp_quote,
     uint32_t *p_quote_size)
 {
@@ -636,6 +711,18 @@ static tdx_attest_error_t extract_quote_from_blob_payload(
 #endif
         return TDX_ATTEST_ERROR_UNEXPECTED;
     }
+
+    if (p_selected_att_key_id) {
+        trace_uuid_bytes("extract_quote_from_blob_payload selected_id=", p_selected_id_, id_size_);
+        if (p_selected_id_ && id_size_ == sizeof(*p_selected_att_key_id)) {
+            memcpy(p_selected_att_key_id, p_selected_id_, sizeof(*p_selected_att_key_id));
+        } else if (p_selected_id_ == NULL && id_size_ == 0) {
+            *p_selected_att_key_id = g_intel_tdqe_ecdsa_uuid;
+        } else {
+            return TDX_ATTEST_ERROR_UNEXPECTED;
+        }
+    }
+
     *pp_quote = malloc(quote_size);
     if (!*pp_quote) {
         return TDX_ATTEST_ERROR_OUT_OF_MEMORY;
@@ -735,6 +822,81 @@ ret_point:
     return ret;
 }
 
+static tdx_attest_error_t local_qgs_get_quote_payload(
+    uint8_t* p_blob_payload,
+    uint32_t blob_payload_size,
+    uint32_t *p_payload_body_size)
+{
+    tdx_attest_error_t ret = TDX_ATTEST_ERROR_UNEXPECTED;
+    const char *socket_path = get_local_qgs_socket_path();
+    uint32_t recieved_bytes = 0;
+    uint32_t body_size = 0;
+
+    if (socket_path == NULL) {
+        return TDX_ATTEST_ERROR_NOT_SUPPORTED;
+    }
+
+    int s = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (-1 == s) {
+        syslog(LOG_ERR, "libtdx_attest: cannot create local qgs socket.");
+        return local_qgs_forced() ? TDX_ATTEST_ERROR_VSOCK_FAILURE : TDX_ATTEST_ERROR_NOT_SUPPORTED;
+    }
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    if (strnlen(socket_path, sizeof(addr.sun_path)) >= sizeof(addr.sun_path)) {
+        close(s);
+        return TDX_ATTEST_ERROR_INVALID_PARAMETER;
+    }
+    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
+
+    if (connect(s, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        syslog(LOG_ERR, "libtdx_attest: cannot connect local qgs socket.");
+        ret = local_qgs_forced() ? TDX_ATTEST_ERROR_VSOCK_FAILURE : TDX_ATTEST_ERROR_NOT_SUPPORTED;
+        goto ret_point;
+    }
+
+    if (blob_payload_size != send(s, p_blob_payload, blob_payload_size, 0)) {
+        ret = TDX_ATTEST_ERROR_VSOCK_FAILURE;
+        goto ret_point;
+    }
+
+    if (HEADER_SIZE != recv(s, p_blob_payload, HEADER_SIZE, 0)) {
+        ret = TDX_ATTEST_ERROR_VSOCK_FAILURE;
+        goto ret_point;
+    }
+
+    for (unsigned i = 0; i < HEADER_SIZE; ++i) {
+        body_size = body_size * 256 + ((p_blob_payload[i]) & 0xFF);
+    }
+
+    if (REQ_BUF_SIZE - sizeof(struct tdx_quote_hdr) - HEADER_SIZE < body_size) {
+        ret = TDX_ATTEST_ERROR_UNEXPECTED;
+        goto ret_point;
+    }
+
+    while (recieved_bytes < body_size) {
+        int recv_ret = (int)recv(s,
+                                 p_blob_payload + HEADER_SIZE + recieved_bytes,
+                                 body_size - recieved_bytes,
+                                 0);
+        if (recv_ret < 0) {
+            ret = TDX_ATTEST_ERROR_VSOCK_FAILURE;
+            goto ret_point;
+        }
+        recieved_bytes += (uint32_t)recv_ret;
+    }
+
+    *p_payload_body_size = body_size;
+    ret = TDX_ATTEST_SUCCESS;
+
+ret_point:
+    close(s);
+    return ret;
+}
+
 tdx_attest_error_t tdcall_get_quote_payload(
     int devfd,
     struct tdx_quote_hdr *p_get_quote_blob,
@@ -805,13 +967,14 @@ tdx_attest_error_t tdx_att_get_quote(
         return TDX_ATTEST_ERROR_INVALID_PARAMETER;
     }
 
-    // Currently only intel TDQE are supported
-    if (1 < list_size) {
-        return TDX_ATTEST_ERROR_INVALID_PARAMETER;
-    }
-    if (p_att_key_id_list && memcmp(p_att_key_id_list, &g_intel_tdqe_uuid,
-                    sizeof(g_intel_tdqe_uuid))) {
-        return TDX_ATTEST_ERROR_UNSUPPORTED_ATT_KEY_ID;
+    if (p_att_key_id_list) {
+        uint32_t i = 0;
+        for (i = 0; i < list_size; ++i) {
+            if (memcmp(&p_att_key_id_list[i], &g_intel_tdqe_ecdsa_uuid, sizeof(g_intel_tdqe_ecdsa_uuid)) != 0 &&
+                memcmp(&p_att_key_id_list[i], &g_intel_tdqe_mldsa_65_uuid, sizeof(g_intel_tdqe_mldsa_65_uuid)) != 0) {
+                return TDX_ATTEST_ERROR_UNSUPPORTED_ATT_KEY_ID;
+            }
+        }
     }
 
     *pp_quote = NULL;
@@ -838,14 +1001,28 @@ tdx_attest_error_t tdx_att_get_quote(
         goto ret_point;
     }
 
-    ret = generate_get_quote_blob(&tdx_report, p_get_quote_blob);
+    ret = generate_get_quote_blob(&tdx_report, p_att_key_id_list, list_size, p_get_quote_blob);
     if (TDX_ATTEST_SUCCESS != ret) {
+        goto ret_point;
+    }
+
+    ret = local_qgs_get_quote_payload((uint8_t*)p_get_quote_blob->data, p_get_quote_blob->in_len, &payload_body_size);
+    if (TDX_ATTEST_SUCCESS == ret) {
+        if (direct_trace_enabled()) {
+            fprintf(stderr, "[tdx-attest-trace] quote transport=local-qgs\n");
+        }
+        ret = extract_quote_from_blob_payload((uint8_t*)p_get_quote_blob->data, payload_body_size, p_att_key_id, pp_quote, p_quote_size);
+    }
+    if (TDX_ATTEST_SUCCESS == ret || local_qgs_forced()) {
         goto ret_point;
     }
 
     ret = vsock_get_quote_payload((uint8_t*)p_get_quote_blob->data, p_get_quote_blob->in_len, &payload_body_size);
     if (TDX_ATTEST_SUCCESS == ret) {
-        ret = extract_quote_from_blob_payload((uint8_t*)p_get_quote_blob->data, payload_body_size, pp_quote, p_quote_size);
+        if (direct_trace_enabled()) {
+            fprintf(stderr, "[tdx-attest-trace] quote transport=vsock\n");
+        }
+        ret = extract_quote_from_blob_payload((uint8_t*)p_get_quote_blob->data, payload_body_size, p_att_key_id, pp_quote, p_quote_size);
     }
     if (TDX_ATTEST_SUCCESS == ret || TDX_ATTEST_ERROR_NOT_SUPPORTED != ret) {
         goto ret_point;
@@ -857,6 +1034,12 @@ tdx_attest_error_t tdx_att_get_quote(
 
     ret = configfs_get_quote(p_tdx_report_data, pp_quote, p_quote_size);
     if (TDX_ATTEST_SUCCESS == ret || TDX_ATTEST_ERROR_NOT_SUPPORTED != ret) {
+        if (TDX_ATTEST_SUCCESS == ret && direct_trace_enabled()) {
+            fprintf(stderr, "[tdx-attest-trace] quote transport=configfs\n");
+        }
+        if (TDX_ATTEST_SUCCESS == ret && p_att_key_id != NULL) {
+            *p_att_key_id = g_intel_tdqe_ecdsa_uuid;
+        }
         goto ret_point;
     }
 
@@ -866,13 +1049,13 @@ tdx_attest_error_t tdx_att_get_quote(
 
     ret = tdcall_get_quote_payload(devfd, p_get_quote_blob, &payload_body_size);
     if (TDX_ATTEST_SUCCESS == ret) {
-        ret = extract_quote_from_blob_payload((uint8_t*)p_get_quote_blob->data, payload_body_size, pp_quote, p_quote_size);
+        if (direct_trace_enabled()) {
+            fprintf(stderr, "[tdx-attest-trace] quote transport=tdcall\n");
+        }
+        ret = extract_quote_from_blob_payload((uint8_t*)p_get_quote_blob->data, payload_body_size, p_att_key_id, pp_quote, p_quote_size);
     }
 
 ret_point:
-    if (TDX_ATTEST_SUCCESS == ret && p_att_key_id) {
-        *p_att_key_id = g_intel_tdqe_uuid;
-    }
     close(devfd);
     free(p_get_quote_blob);
 
@@ -919,9 +1102,14 @@ tdx_attest_error_t tdx_att_get_supported_att_key_ids(
         return TDX_ATTEST_ERROR_INVALID_PARAMETER;
     }
     if (p_att_key_id_list) {
-        p_att_key_id_list[0] = g_intel_tdqe_uuid;
+        if (*p_list_size < 2) {
+            *p_list_size = 2;
+            return TDX_ATTEST_ERROR_INVALID_PARAMETER;
+        }
+        p_att_key_id_list[0] = g_intel_tdqe_ecdsa_uuid;
+        p_att_key_id_list[1] = g_intel_tdqe_mldsa_65_uuid;
     }
-    *p_list_size = 1;
+    *p_list_size = 2;
     return TDX_ATTEST_SUCCESS;
 }
 

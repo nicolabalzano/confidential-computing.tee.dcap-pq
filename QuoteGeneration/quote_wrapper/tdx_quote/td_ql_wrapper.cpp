@@ -111,6 +111,18 @@ static const sgx_ql_att_key_id_t* get_default_att_key_id_for_algorithm(uint32_t 
     }
 }
 
+static tee_att_bootstrap_mode_t get_default_bootstrap_mode_for_algorithm(uint32_t algorithm_id)
+{
+    switch (algorithm_id)
+    {
+    case SGX_QL_ALG_MLDSA_65:
+        return TEE_ATT_BOOTSTRAP_TRUSTED_TDX_ONLY;
+    case SGX_QL_ALG_ECDSA_P256:
+    default:
+        return TEE_ATT_BOOTSTRAP_LEGACY_PCE;
+    }
+}
+
 
 tee_att_error_t tee_att_create_context(const tee_att_att_key_id_t* p_att_key_id,
     const char* p_qe_path,
@@ -156,6 +168,7 @@ tee_att_error_t tee_att_create_context(const tee_att_att_key_id_t* p_att_key_id,
     tee_att_config_t* p_context = new tee_att_config_t();
     p_context->m_att_key_algorithm_id = p_att_key_id ? static_cast<sgx_ql_attestation_algorithm_id_t>(p_att_key_id->base.algorithm_id)
                                                      : SGX_QL_ALG_ECDSA_P256;
+    p_context->m_bootstrap_mode = get_default_bootstrap_mode_for_algorithm(p_context->m_att_key_algorithm_id);
 
     if (NULL != p_qe_path)
     {

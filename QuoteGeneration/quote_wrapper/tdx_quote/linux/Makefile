@@ -87,10 +87,10 @@ $(Quote_Name): $(Quote_C_Objects) $(Quote_Cpp_Objects) $(PCE_Library)
 $(PCE_Library): force_look
 	@make -C $(PCE_Library_Dir)
 
-test_app: $(Quote_Name) ../../../../../tdx_tests/test_tdx_quote_wrapper.cpp ../../../../../tdx_tests/utils.cpp
+test_app: $(Quote_Name) ../../../../../tdx_tests/direct/test_tdx_quote_wrapper.cpp ../../../../../tdx_tests/common/utils.cpp
 	@make -C ../../tdx_attest/linux
-	$(CXX) $(Quote_Cpp_Flags) -I../.. -I../../tdx_attest -I../../common/inc \
-		../../../../../tdx_tests/test_tdx_quote_wrapper.cpp ../../../../../tdx_tests/utils.cpp -L. -lsgx_tdx_logic -L../../../pce_wrapper/linux -lsgx_pce_logic -L../../tdx_attest/linux -ltdx_attest \
+	$(CXX) $(Quote_Cpp_Flags) -I../.. -I../../tdx_attest -I../../common/inc -I../../../../../tdx_tests/common \
+		../../../../../tdx_tests/direct/test_tdx_quote_wrapper.cpp ../../../../../tdx_tests/common/utils.cpp -L. -lsgx_tdx_logic -L../../../pce_wrapper/linux -lsgx_pce_logic -L../../tdx_attest/linux -ltdx_attest \
 		-L$(SGX_SDK)/lib64 \
 		-lsgx_urts -lpthread -ldl -o $@
 	@echo "LINK =>  $@"
@@ -113,4 +113,3 @@ clean:
 	@make -C $(PCE_Library_Dir) clean
 	@make -C $(TDQE_Dir) clean
 	@make -C $(ID_ENCLAVE_Dir) clean
-

@@ -5,12 +5,14 @@
 
 #include "qgs_server.h"
 #include "qgs_log.h"
+#include <cstdlib>
 #include <iostream>
 #include <fstream>
 #include <linux/vm_sockets.h>
 
 #define QGS_CONFIG_FILE "/etc/qgs.conf"
 #define QGS_UNIX_SOCKET_FILE "/var/run/tdx-qgs/qgs.socket"
+#define QGS_SOCKET_PATH_ENV "QGS_SOCKET_PATH"
 #define MAX_PORT_NUMBER 0xFFFF // accepted port range 0..65535 (0xFFFF)
 
 using namespace std;
@@ -75,6 +77,16 @@ bool ensureSocketDirectory(const std::string& socket_file) {
         return createDirectoryRecursive(dir_path);
     }
     return true;
+}
+
+const char* getQgsSocketPath()
+{
+    const char* env_socket_path = getenv(QGS_SOCKET_PATH_ENV);
+    if (env_socket_path != NULL && env_socket_path[0] != '\0') {
+        return env_socket_path;
+    }
+
+    return QGS_UNIX_SOCKET_FILE;
 }
 
 int main(int argc, const char* argv[])
@@ -198,7 +210,7 @@ int main(int argc, const char* argv[])
         QGS_LOG_INFO("Parameters after command line check: num_thread = %d, port = %d (%04xh)\n", (uint8_t)num_threads, port, port);
 
     if (socket_based_communication) {
-        cout << "Use unix socket: " << QGS_UNIX_SOCKET_FILE << endl;
+        cout << "Use unix socket: " << getQgsSocketPath() << endl;
     }
 
     if(!no_daemon && daemon(0, 0) < 0) {
@@ -226,11 +238,12 @@ int main(int argc, const char* argv[])
                 asio::generic::stream_protocol::endpoint vsock_ep(&vm_addr, sizeof(vm_addr));
                 ep = vsock_ep;
             } else {
-                if (ensureSocketDirectory(QGS_UNIX_SOCKET_FILE)) {
-                    asio::local::stream_protocol::endpoint unix_ep(QGS_UNIX_SOCKET_FILE);
+                const char* socket_path = getQgsSocketPath();
+                if (ensureSocketDirectory(socket_path)) {
+                    asio::local::stream_protocol::endpoint unix_ep(socket_path);
                     ep = unix_ep;
                 } else {
-                    QGS_LOG_ERROR("Access denied to create path for socket: %s\n", QGS_UNIX_SOCKET_FILE);
+                    QGS_LOG_ERROR("Access denied to create path for socket: %s\n", socket_path);
                     exit(1);
                 }
             }

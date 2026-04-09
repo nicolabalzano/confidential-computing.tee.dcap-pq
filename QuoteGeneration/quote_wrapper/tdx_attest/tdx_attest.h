@@ -74,6 +74,12 @@ typedef struct _tdx_uuid_t
     0x81, 0x73, 0xfc, 0x43, 0xc1, 0xfa, 0x4f, 0x3f     \
 }
 
+#define TDX_SGX_MLDSA_65_ATTESTATION_ID                \
+{                                                      \
+    0xe8, 0x6c, 0x04, 0x6e, 0x8c, 0xc4, 0x4d, 0x95,    \
+    0x81, 0x73, 0xfc, 0x43, 0xc1, 0xfa, 0x4f, 0x40     \
+}
+
 #define TDX_REPORT_DATA_SIZE 64
 typedef struct _tdx_report_data_t
 {
@@ -265,4 +271,3 @@ __attribute__ ((visibility("default"))) tdx_attest_error_t tdx_att_get_quote_by_
 
 
 #endif
-

@@ -69,6 +69,12 @@ typedef enum _tdqe_error_t {
     TDQE_ERROR_UNSUPPORTED_ATT_KEY_ID = TDQE_MK_ERROR(0x000D),      ///< The selected attestation key algorithm is not supported by this TDQE
 } tdqe_error_t;
 
+#define TDQE_MLDSA_65_SEED_SIZE 32
+#define TDQE_MLDSA_65_PRIVATE_KEY_SIZE 4032
+
+#define SGX_QL_SEAL_MLDSA_65_KEY_BLOB 1
+#define SGX_QL_MLDSA_65_KEY_BLOB_VERSION_0 0
+
 #pragma pack(push, 1)
 
 /** Structure definition of the RSA key used to decrypt the PCE's PPID */
@@ -102,11 +108,56 @@ typedef struct _ref_ciphertext_ecdsa_data_sdk_t {
     };
 }ref_ciphertext_ecdsa_data_sdk_t;
 
+typedef struct _ref_ciphertext_mldsa_65_data_sdk_t {
+    uint8_t              mldsa_private_key[TDQE_MLDSA_65_PRIVATE_KEY_SIZE];
+    uint8_t              is_clear_ppid;
+    union {
+        uint8_t              ppid[16];
+        ref_encrypted_ppid_t encrypted_ppid_data;
+    };
+} ref_ciphertext_mldsa_65_data_sdk_t;
+
+typedef struct _ref_plaintext_mldsa_65_data_sdk_t {
+    uint8_t                seal_blob_type;
+    uint8_t                mldsa_key_version;
+    sgx_cpu_svn_t          cert_cpu_svn;
+    sgx_isv_svn_t          cert_qe_isv_svn;
+    sgx_pce_info_t         cert_pce_info;
+    sgx_ql_cert_key_type_t certification_key_type;
+    sgx_cpu_svn_t          raw_cpu_svn;
+    sgx_pce_info_t         raw_pce_info;
+    uint8_t                signature_scheme;
+    sgx_target_info_t      pce_target_info;
+    sgx_report_t           qe_report;
+    sgx_ec256_signature_t  qe_report_cert_key_sig;
+    uint8_t                mldsa_att_public_key[SGX_QL_MLDSA_65_PUB_KEY_SIZE];
+    sgx_sha256_hash_t      mldsa_id;
+    sgx_cpu_svn_t          seal_cpu_svn;
+    sgx_isv_svn_t          seal_qe_isv_svn;
+    uint32_t               authentication_data_size;
+    uint8_t                authentication_data[REF_ECDSDA_AUTHENTICATION_DATA_SIZE];
+    sgx_key_128bit_t       qe_id;
+} ref_plaintext_mldsa_65_data_sdk_t;
+
 #pragma pack(pop)
+
+#define SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK ((uint32_t)(sizeof(sgx_sealed_data_t) + \
+                                                          sizeof(ref_ciphertext_mldsa_65_data_sdk_t) + \
+                                                          sizeof(ref_plaintext_mldsa_65_data_sdk_t)))
+
+#define SGX_QL_TRUSTED_MAX_BLOB_SIZE_SDK \
+    ((SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK > SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK) ? \
+        SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK : SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK)
 
 #if defined(__cplusplus)
 extern "C" {
 #endif
+
+int tdqe_mldsa65_keygen(uint8_t *public_key, uint8_t *private_key, uint8_t *seed);
+
+int tdqe_mldsa65_sign(uint8_t *signature, const uint8_t *message, size_t message_len, const uint8_t *private_key);
+
+int tdqe_mldsa65_verify(const uint8_t *signature, const uint8_t *message, size_t message_len, const uint8_t *public_key);
 
 #if defined(__cplusplus)
 }

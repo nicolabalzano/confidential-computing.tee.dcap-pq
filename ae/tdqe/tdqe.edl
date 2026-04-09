@@ -59,7 +59,8 @@ trusted {
                                 uint32_t pub_key_id_size,
                                 [out, size=pub_key_id_size] uint8_t *p_pub_key_id);
 
-    public uint32_t store_cert_data([in]ref_plaintext_ecdsa_data_sdk_t *p_plaintext_data,
+    public uint32_t store_cert_data([in, size = plaintext_data_size] uint8_t *p_plaintext_data,
+                                    uint32_t plaintext_data_size,
                                     sgx_ql_cert_key_type_t certification_key_type,
                                     [in, size = encrypted_ppid_size] uint8_t* p_encrypted_ppid,
                                     uint32_t encrypted_ppid_size,

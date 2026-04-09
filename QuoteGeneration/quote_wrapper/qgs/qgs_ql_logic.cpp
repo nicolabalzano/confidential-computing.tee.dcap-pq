@@ -36,10 +36,49 @@
 #include "se_trace.h"
 #include "sgx_ql_lib_common.h"
 #include "td_ql_wrapper.h"
+#include "tdx_attest.h"
 #include <boost/thread.hpp>
 #include <boost/thread/detail/thread.hpp>
 #include <boost/thread/tss.hpp>
+#include <cstdio>
+#include <cstring>
 #include <dlfcn.h>
+
+static const sgx_ql_att_key_id_t k_qgs_default_ecdsa_p256_att_key_id =
+{
+    0,
+    0,
+    32,
+    { 0x8c, 0x4f, 0x57, 0x75, 0xd7, 0x96, 0x50, 0x3e, 0x96, 0x13, 0x7f, 0x77, 0xc6, 0x8a, 0x82, 0x9a,
+      0x00, 0x56, 0xac, 0x8d, 0xed, 0x70, 0x14, 0x0b, 0x08, 0x1b, 0x09, 0x44, 0x90, 0xc5, 0x7b, 0xff,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    2,
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    SGX_QL_ALG_ECDSA_P256
+};
+
+static const sgx_ql_att_key_id_t k_qgs_default_mldsa_65_att_key_id =
+{
+    0,
+    0,
+    32,
+    { 0x8c, 0x4f, 0x57, 0x75, 0xd7, 0x96, 0x50, 0x3e, 0x96, 0x13, 0x7f, 0x77, 0xc6, 0x8a, 0x82, 0x9a,
+      0x00, 0x56, 0xac, 0x8d, 0xed, 0x70, 0x14, 0x0b, 0x08, 0x1b, 0x09, 0x44, 0x90, 0xc5, 0x7b, 0xff,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    2,
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    SGX_QL_ALG_MLDSA_65
+};
 
 typedef quote3_error_t (*get_collateral_func)(const uint8_t *fmspc,
                                               uint16_t fmspc_size, const char *pck_ca,
@@ -67,6 +106,120 @@ boost::thread_specific_ptr<tee_att_config_t> ptr(cleanup);
 
 namespace intel { namespace sgx { namespace dcap { namespace qgs {
 
+    static bool is_tdx_uuid_equal(const tdx_uuid_t& lhs, const uint8_t *rhs)
+    {
+        return rhs != NULL && std::memcmp(lhs.d, rhs, sizeof(lhs.d)) == 0;
+    }
+
+    static bool select_tdx_att_key_id_from_uuid_list(const uint8_t *p_id_list,
+                                                     uint32_t id_list_size,
+                                                     tee_att_att_key_id_t *p_selected_key_id,
+                                                     tdx_uuid_t *p_selected_uuid)
+    {
+        static const tdx_uuid_t kEcdsaUuid = {TDX_SGX_ECDSA_ATTESTATION_ID};
+        static const tdx_uuid_t kMldsaUuid = {TDX_SGX_MLDSA_65_ATTESTATION_ID};
+        const uint32_t uuid_size = sizeof(tdx_uuid_t);
+
+        if (p_selected_key_id == NULL || p_selected_uuid == NULL) {
+            return false;
+        }
+
+        std::memset(p_selected_key_id, 0, sizeof(*p_selected_key_id));
+        std::memset(p_selected_uuid, 0, sizeof(*p_selected_uuid));
+
+        if (p_id_list == NULL || id_list_size == 0) {
+            return false;
+        }
+
+        if ((id_list_size % uuid_size) != 0) {
+            return false;
+        }
+
+        for (uint32_t offset = 0; offset < id_list_size; offset += uuid_size) {
+            const uint8_t *candidate = p_id_list + offset;
+            if (is_tdx_uuid_equal(kMldsaUuid, candidate)) {
+                if (std::memcpy(&p_selected_key_id->base,
+                                &k_qgs_default_mldsa_65_att_key_id,
+                                sizeof(k_qgs_default_mldsa_65_att_key_id)) == NULL) {
+                    return false;
+                }
+                *p_selected_uuid = kMldsaUuid;
+                return true;
+            }
+            if (is_tdx_uuid_equal(kEcdsaUuid, candidate)) {
+                if (std::memcpy(&p_selected_key_id->base,
+                                &k_qgs_default_ecdsa_p256_att_key_id,
+                                sizeof(k_qgs_default_ecdsa_p256_att_key_id)) == NULL) {
+                    return false;
+                }
+                *p_selected_uuid = kEcdsaUuid;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static tee_att_error_t ensure_context_for_quote_request(const uint8_t *p_id_list,
+                                                            uint32_t id_list_size,
+                                                            tdx_uuid_t *p_selected_uuid)
+    {
+        static const tdx_uuid_t kDefaultUuid = {TDX_SGX_ECDSA_ATTESTATION_ID};
+        tee_att_att_key_id_t current_key_id = {};
+        tee_att_att_key_id_t requested_key_id = {};
+        tdx_uuid_t requested_uuid = {};
+        tee_att_error_t ret = TEE_ATT_SUCCESS;
+
+        if (ptr.get() == 0) {
+            if (p_selected_uuid) {
+                *p_selected_uuid = kDefaultUuid;
+            }
+            return TEE_ATT_SUCCESS;
+        }
+
+        if (!select_tdx_att_key_id_from_uuid_list(p_id_list, id_list_size, &requested_key_id, &requested_uuid)) {
+            if (p_selected_uuid) {
+                *p_selected_uuid = kDefaultUuid;
+            }
+            return TEE_ATT_SUCCESS;
+        }
+        fprintf(stderr, "[qgs-debug] ensure_context requested algorithm_id=%u\n", requested_key_id.base.algorithm_id);
+        fflush(stderr);
+
+        ret = tee_att_get_keyid(ptr.get(), &current_key_id);
+        if (ret != TEE_ATT_SUCCESS) {
+            fprintf(stderr, "[qgs-debug] ensure_context tee_att_get_keyid ret=0x%x\n", ret);
+            fflush(stderr);
+            return ret;
+        }
+        fprintf(stderr, "[qgs-debug] ensure_context current algorithm_id=%u\n", current_key_id.base.algorithm_id);
+        fflush(stderr);
+
+        if (current_key_id.base.algorithm_id == requested_key_id.base.algorithm_id) {
+            if (p_selected_uuid) {
+                *p_selected_uuid = requested_uuid;
+            }
+            return TEE_ATT_SUCCESS;
+        }
+
+        ptr.reset(nullptr);
+
+        tee_att_config_t *p_ctx = NULL;
+        fprintf(stderr, "[qgs-debug] ensure_context about to create selected context algorithm_id=%u\n",
+                requested_key_id.base.algorithm_id);
+        fflush(stderr);
+        ret = tee_att_create_context(&requested_key_id, NULL, &p_ctx);
+        fprintf(stderr, "[qgs-debug] ensure_context create_context ret=0x%x ctx=%p\n", ret, (void*)p_ctx);
+        fflush(stderr);
+        if (ret != TEE_ATT_SUCCESS) {
+            return ret;
+        }
+        ptr.reset(p_ctx);
+        if (p_selected_uuid) {
+            *p_selected_uuid = requested_uuid;
+        }
+        return TEE_ATT_SUCCESS;
+    }
+
     // Function to check if any byte within [start, end) in a vector is non-zero
     bool is_any_byte_none_zero(const uint8_t* p, size_t size) {
         // Use std::any_of to check if any element in the specified range is non-zero
@@ -76,6 +229,8 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
     }
 
     data_buffer get_resp(const uint8_t *p_req, uint32_t req_size) {
+        fprintf(stderr, "[qgs-debug] get_resp enter req_size=%u\n", req_size);
+        fflush(stderr);
 
         tee_att_error_t tee_att_ret = TEE_ATT_SUCCESS;
         qgs_msg_error_t qgs_msg_error_ret = QGS_MSG_SUCCESS;
@@ -86,13 +241,21 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
         uint32_t req_type = QGS_MSG_TYPE_MAX;
         if (QGS_MSG_SUCCESS != qgs_msg_get_type(p_req, req_size, &req_type)) {
             QGS_LOG_ERROR("Cannot get msg type\n");
+            fprintf(stderr, "[qgs-debug] qgs_msg_get_type failed\n");
+            fflush(stderr);
             return {};
         }
+        fprintf(stderr, "[qgs-debug] get_resp req_type=%u\n", req_type);
+        fflush(stderr);
         if (ptr.get() == 0) {
             tee_att_error_t ret = TEE_ATT_SUCCESS;
             tee_att_config_t *p_ctx = NULL;
             QGS_LOG_INFO("call tee_att_create_context\n");
+            fprintf(stderr, "[qgs-debug] about to call tee_att_create_context\n");
+            fflush(stderr);
             ret = tee_att_create_context(NULL, NULL, &p_ctx);
+            fprintf(stderr, "[qgs-debug] tee_att_create_context ret=0x%x ctx=%p\n", ret, (void*)p_ctx);
+            fflush(stderr);
             if (TEE_ATT_SUCCESS != ret) {
                 QGS_LOG_ERROR("Cannot create context\n");
                 return {};
@@ -120,11 +283,16 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
                 }
             } while(0);
 
-            if (req_type != GET_PLATFORM_INFO_REQ) {
+            if (req_type != GET_PLATFORM_INFO_REQ && req_type != GET_QUOTE_REQ) {
                 sgx_target_info_t qe_target_info;
                 uint8_t hash[32] = {0};
                 size_t hash_size = sizeof(hash);
+                fprintf(stderr, "[qgs-debug] about to call tee_att_init_quote bootstrap\n");
+                fflush(stderr);
                 tee_att_ret = tee_att_init_quote(ptr.get(), &qe_target_info, false, &hash_size, hash);
+                fprintf(stderr, "[qgs-debug] tee_att_init_quote bootstrap ret=0x%x hash_size=%zu\n",
+                        tee_att_ret, hash_size);
+                fflush(stderr);
                 if (TEE_ATT_SUCCESS != tee_att_ret) {
                     QGS_LOG_ERROR("tee_att_init_quote return 0x%x\n", tee_att_ret);
                     return {};
@@ -142,6 +310,7 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
             uint32_t report_size;
             const uint8_t *p_id_list;
             uint32_t id_list_size;
+            tdx_uuid_t selected_tdx_uuid = {TDX_SGX_ECDSA_ATTESTATION_ID};
 
             data_buffer quote_buf;
 
@@ -154,6 +323,34 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
                 resp_error_code = QGS_MSG_ERROR_UNEXPECTED;
                 QGS_LOG_ERROR("qgs_msg_inflate_get_quote_req return error\n");
             } else {
+                QGS_LOG_INFO("GET_QUOTE_REQ: report_size=%u id_list_size=%u\n", report_size, id_list_size);
+                tee_att_ret = ensure_context_for_quote_request(p_id_list, id_list_size, &selected_tdx_uuid);
+                fprintf(stderr, "[qgs-debug] ensure_context_for_quote_request ret=0x%x\n", tee_att_ret);
+                fflush(stderr);
+                if (tee_att_ret != TEE_ATT_SUCCESS) {
+                    resp_error_code = QGS_MSG_ERROR_UNEXPECTED;
+                    QGS_LOG_ERROR("ensure_context_for_quote_request return 0x%x\n", tee_att_ret);
+                    break;
+                }
+                QGS_LOG_INFO("GET_QUOTE_REQ: selected uuid=%02x%02x%02x%02x... algorithm-aware context ready\n",
+                             selected_tdx_uuid.d[0], selected_tdx_uuid.d[1],
+                             selected_tdx_uuid.d[2], selected_tdx_uuid.d[3]);
+                {
+                    sgx_target_info_t qe_target_info = {};
+                    uint8_t hash[32] = {0};
+                    size_t hash_size = sizeof(hash);
+                    fprintf(stderr, "[qgs-debug] GET_QUOTE_REQ about to call tee_att_init_quote selected-context bootstrap\n");
+                    fflush(stderr);
+                    tee_att_ret = tee_att_init_quote(ptr.get(), &qe_target_info, false, &hash_size, hash);
+                    fprintf(stderr, "[qgs-debug] GET_QUOTE_REQ tee_att_init_quote selected-context ret=0x%x hash_size=%zu\n",
+                            tee_att_ret, hash_size);
+                    fflush(stderr);
+                    if (TEE_ATT_SUCCESS != tee_att_ret) {
+                        resp_error_code = QGS_MSG_ERROR_UNEXPECTED;
+                        QGS_LOG_ERROR("GET_QUOTE_REQ selected-context tee_att_init_quote return 0x%x\n", tee_att_ret);
+                        break;
+                    }
+                }
                 int retry = 1;
 
                 do {
@@ -172,18 +369,28 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
                             QGS_LOG_INFO("tee_att_init_quote return Success\n");
                         }
                     }
+                    QGS_LOG_INFO("GET_QUOTE_REQ: calling tee_att_get_quote_size\n");
+                    fprintf(stderr, "[qgs-debug] about to call tee_att_get_quote_size\n");
+                    fflush(stderr);
                     if (TEE_ATT_SUCCESS != (tee_att_ret = tee_att_get_quote_size(ptr.get(), &size))) {
                         resp_error_code = QGS_MSG_ERROR_UNEXPECTED;
                         QGS_LOG_ERROR("tee_att_get_quote_size return 0x%x\n", tee_att_ret);
                     } else {
-                        QGS_LOG_INFO("tee_att_get_quote_size return Success\n");
+                        QGS_LOG_INFO("tee_att_get_quote_size return Success, size=%u\n", size);
+                        fprintf(stderr, "[qgs-debug] tee_att_get_quote_size ret=0x%x size=%u\n", tee_att_ret, size);
+                        fflush(stderr);
                         quote_buf.resize(size);
+                        QGS_LOG_INFO("GET_QUOTE_REQ: calling tee_att_get_quote\n");
+                        fprintf(stderr, "[qgs-debug] about to call tee_att_get_quote\n");
+                        fflush(stderr);
                         tee_att_ret = tee_att_get_quote(ptr.get(),
                                                         p_report,
                                                         report_size,
                                                         NULL,
                                                         quote_buf.data(),
                                                         size);
+                        fprintf(stderr, "[qgs-debug] tee_att_get_quote ret=0x%x\n", tee_att_ret);
+                        fflush(stderr);
                         if (TEE_ATT_SUCCESS != tee_att_ret) {
                             resp_error_code = QGS_MSG_ERROR_UNEXPECTED;
                             QGS_LOG_ERROR("tee_att_get_quote return 0x%x\n", tee_att_ret);
@@ -196,8 +403,15 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
                 } while (TEE_ATT_ATT_KEY_NOT_INITIALIZED == tee_att_ret && retry--);
             }
             if (resp_error_code == QGS_MSG_SUCCESS) {
-                qgs_msg_error_ret = qgs_msg_gen_get_quote_resp(NULL, 0, quote_buf.data(), size, &p_resp, &resp_size);
+                QGS_LOG_INFO("GET_QUOTE_REQ: generating success response size=%u\n", size);
+                qgs_msg_error_ret = qgs_msg_gen_get_quote_resp(selected_tdx_uuid.d,
+                                                               sizeof(selected_tdx_uuid.d),
+                                                               quote_buf.data(),
+                                                               size,
+                                                               &p_resp,
+                                                               &resp_size);
             } else {
+                QGS_LOG_ERROR("GET_QUOTE_REQ: generating error response code=%u\n", resp_error_code);
                 qgs_msg_error_ret = qgs_msg_gen_error_resp(resp_error_code, GET_QUOTE_RESP, &p_resp, &resp_size);
             }
             if (QGS_MSG_SUCCESS != qgs_msg_error_ret) {

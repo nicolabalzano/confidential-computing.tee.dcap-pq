@@ -45,6 +45,88 @@ static const char* get_blob_label_for_algorithm(uint32_t algorithm_id)
     }
 }
 
+static uint32_t get_tdqe_blob_size_for_algorithm(uint32_t algorithm_id)
+{
+    switch (algorithm_id)
+    {
+    case SGX_QL_ALG_MLDSA_65:
+        return SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK;
+    case SGX_QL_ALG_ECDSA_P256:
+    default:
+        return SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK;
+    }
+}
+
+struct tdqe_blob_plaintext_view_t {
+    uint8_t seal_blob_type;
+    const sgx_ql_cert_key_type_t *certification_key_type;
+    const sgx_isv_svn_t *cert_qe_isv_svn;
+    const sgx_cpu_svn_t *cert_cpu_svn;
+    const sgx_pce_info_t *cert_pce_info;
+    const sgx_cpu_svn_t *raw_cpu_svn;
+    const sgx_pce_info_t *raw_pce_info;
+    const uint8_t *signature_scheme;
+    const sgx_target_info_t *pce_target_info;
+    const sgx_report_t *qe_report;
+    const sgx_key_128bit_t *qe_id;
+};
+
+static bool get_tdqe_blob_plaintext_view(const uint8_t *p_blob,
+                                         uint32_t blob_size,
+                                         tdqe_blob_plaintext_view_t *p_view)
+{
+    const sgx_sealed_data_t *p_sealed_blob = NULL;
+    const uint8_t *p_plaintext = NULL;
+
+    if ((NULL == p_blob) || (NULL == p_view)) {
+        return false;
+    }
+
+    if ((blob_size != SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK) &&
+        (blob_size != SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK)) {
+        return false;
+    }
+
+    memset(p_view, 0, sizeof(*p_view));
+    p_sealed_blob = reinterpret_cast<const sgx_sealed_data_t *>(p_blob);
+    p_plaintext = p_blob + sizeof(sgx_sealed_data_t) + p_sealed_blob->plain_text_offset;
+    p_view->seal_blob_type = *p_plaintext;
+
+    if (p_view->seal_blob_type == SGX_QL_SEAL_ECDSA_KEY_BLOB) {
+        const ref_plaintext_ecdsa_data_sdk_t *p_ecdsa =
+            reinterpret_cast<const ref_plaintext_ecdsa_data_sdk_t *>(p_plaintext);
+        p_view->certification_key_type = &p_ecdsa->certification_key_type;
+        p_view->cert_qe_isv_svn = &p_ecdsa->cert_qe_isv_svn;
+        p_view->cert_cpu_svn = &p_ecdsa->cert_cpu_svn;
+        p_view->cert_pce_info = &p_ecdsa->cert_pce_info;
+        p_view->raw_cpu_svn = &p_ecdsa->raw_cpu_svn;
+        p_view->raw_pce_info = &p_ecdsa->raw_pce_info;
+        p_view->signature_scheme = &p_ecdsa->signature_scheme;
+        p_view->pce_target_info = &p_ecdsa->pce_target_info;
+        p_view->qe_report = &p_ecdsa->qe_report;
+        p_view->qe_id = &p_ecdsa->qe_id;
+        return true;
+    }
+
+    if (p_view->seal_blob_type == SGX_QL_SEAL_MLDSA_65_KEY_BLOB) {
+        const ref_plaintext_mldsa_65_data_sdk_t *p_mldsa =
+            reinterpret_cast<const ref_plaintext_mldsa_65_data_sdk_t *>(p_plaintext);
+        p_view->certification_key_type = &p_mldsa->certification_key_type;
+        p_view->cert_qe_isv_svn = &p_mldsa->cert_qe_isv_svn;
+        p_view->cert_cpu_svn = &p_mldsa->cert_cpu_svn;
+        p_view->cert_pce_info = &p_mldsa->cert_pce_info;
+        p_view->raw_cpu_svn = &p_mldsa->raw_cpu_svn;
+        p_view->raw_pce_info = &p_mldsa->raw_pce_info;
+        p_view->signature_scheme = &p_mldsa->signature_scheme;
+        p_view->pce_target_info = &p_mldsa->pce_target_info;
+        p_view->qe_report = &p_mldsa->qe_report;
+        p_view->qe_id = &p_mldsa->qe_id;
+        return true;
+    }
+
+    return false;
+}
+
 typedef quote3_error_t (*sgx_get_quote_config_func_t)(const sgx_ql_pck_cert_id_t *p_pck_cert_id,
                                                       sgx_ql_config_t **pp_quote_config);
 
@@ -911,7 +993,8 @@ tee_att_error_t tee_att_config_t::read_persistent_data(uint8_t *p_buf,
  *
  */
 tee_att_error_t tee_att_config_t::certify_key(uint8_t *p_ecdsa_blob,
-                                  ref_plaintext_ecdsa_data_sdk_t* p_plaintext_data,
+                                  uint8_t* p_plaintext_data,
+                                  uint32_t plaintext_data_size,
                                   uint8_t *p_encrypted_ppid,
                                   uint32_t encrypted_ppid_size,
                                   sgx_ql_cert_key_type_t certification_key_type)
@@ -919,13 +1002,19 @@ tee_att_error_t tee_att_config_t::certify_key(uint8_t *p_ecdsa_blob,
     tee_att_error_t refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
     sgx_status_t sgx_status = SGX_SUCCESS;
     tdqe_error_t tdqe_error = TDQE_ERROR_UNEXPECTED;
-    sgx_pce_error_t pce_error;
     sgx_ec256_signature_t pce_sig;
-    uint32_t sig_out_size;
+    const uint32_t tdqe_blob_size = get_tdqe_blob_size_for_algorithm(m_att_key_algorithm_id);
+    ref_plaintext_ecdsa_data_sdk_t *p_plaintext_ecdsa = NULL;
+    ref_plaintext_mldsa_65_data_sdk_t *p_plaintext_mldsa = NULL;
+    sgx_isv_svn_t *p_cert_pce_isv_svn = NULL;
+    sgx_cpu_svn_t *p_cert_cpu_svn = NULL;
+    sgx_report_t *p_qe_report = NULL;
+    sgx_ec256_signature_t *p_qe_report_cert_key_sig = NULL;
 
     // Verify inputs
     if((NULL == p_ecdsa_blob) ||
        (NULL == p_plaintext_data) ||
+       (0 == plaintext_data_size) ||
        (0 == m_eid)) {
         return(TEE_ATT_ERROR_INVALID_PARAMETER);
     }
@@ -936,7 +1025,24 @@ tee_att_error_t tee_att_config_t::certify_key(uint8_t *p_ecdsa_blob,
         }
     }
 
-    if (PPID_RSA3072_ENCRYPTED != certification_key_type) {
+    refqt_ret = validate_legacy_certification_key_type(certification_key_type);
+    if (TEE_ATT_SUCCESS != refqt_ret) {
+        return refqt_ret;
+    }
+
+    if (plaintext_data_size == sizeof(ref_plaintext_ecdsa_data_sdk_t)) {
+        p_plaintext_ecdsa = reinterpret_cast<ref_plaintext_ecdsa_data_sdk_t *>(p_plaintext_data);
+        p_cert_pce_isv_svn = &p_plaintext_ecdsa->cert_pce_info.pce_isv_svn;
+        p_cert_cpu_svn = &p_plaintext_ecdsa->cert_cpu_svn;
+        p_qe_report = &p_plaintext_ecdsa->qe_report;
+        p_qe_report_cert_key_sig = &p_plaintext_ecdsa->qe_report_cert_key_sig;
+    } else if (plaintext_data_size == sizeof(ref_plaintext_mldsa_65_data_sdk_t)) {
+        p_plaintext_mldsa = reinterpret_cast<ref_plaintext_mldsa_65_data_sdk_t *>(p_plaintext_data);
+        p_cert_pce_isv_svn = &p_plaintext_mldsa->cert_pce_info.pce_isv_svn;
+        p_cert_cpu_svn = &p_plaintext_mldsa->cert_cpu_svn;
+        p_qe_report = &p_plaintext_mldsa->qe_report;
+        p_qe_report_cert_key_sig = &p_plaintext_mldsa->qe_report_cert_key_sig;
+    } else {
         return(TEE_ATT_ERROR_INVALID_PARAMETER);
     }
 
@@ -947,22 +1053,18 @@ tee_att_error_t tee_att_config_t::certify_key(uint8_t *p_ecdsa_blob,
     // For E5's, the PCK Cert can be requested on demand and use the CPUSVN+PCE ISVSVN of the current platform.
     //
     SE_TRACE(SE_TRACE_DEBUG, "pce_cert_psvn.cpusvn:\n");
-    PRINT_BYTE_ARRAY(SE_TRACE_DEBUG, &p_plaintext_data->cert_cpu_svn, sizeof(p_plaintext_data->cert_cpu_svn));
-    SE_TRACE(SE_TRACE_NOTICE, "\npce_cert_psvn.isv_svn = 0x%04x.\n", p_plaintext_data->cert_pce_info.pce_isv_svn);
-    pce_error = sgx_pce_sign_report(&p_plaintext_data->cert_pce_info.pce_isv_svn,
-                                    &p_plaintext_data->cert_cpu_svn,
-                                    &p_plaintext_data->qe_report,
-                                    (uint8_t*)&pce_sig,
-                                    sizeof(pce_sig),
-                                    &sig_out_size);
-    if (SGX_PCE_SUCCESS != pce_error) {
-        SE_TRACE(SE_TRACE_ERROR, "Failed to certify the attestation key. PCE Error = 0x%04x.\n", pce_error);
-        refqt_ret = translate_pce_errors(pce_error);
+    PRINT_BYTE_ARRAY(SE_TRACE_DEBUG, p_cert_cpu_svn, sizeof(*p_cert_cpu_svn));
+    SE_TRACE(SE_TRACE_NOTICE, "\npce_cert_psvn.isv_svn = 0x%04x.\n", *p_cert_pce_isv_svn);
+    refqt_ret = legacy_pce_sign_report(p_cert_pce_isv_svn,
+                                       p_cert_cpu_svn,
+                                       p_qe_report,
+                                       &pce_sig);
+    if (TEE_ATT_SUCCESS != refqt_ret) {
         goto CLEANUP;
     }
 
     // Update the signature data and the report that was signed.
-    if(0 != memcpy_s(&p_plaintext_data->qe_report_cert_key_sig, sizeof(p_plaintext_data->qe_report_cert_key_sig), &pce_sig, sizeof(pce_sig))) {
+    if(0 != memcpy_s(p_qe_report_cert_key_sig, sizeof(*p_qe_report_cert_key_sig), &pce_sig, sizeof(pce_sig))) {
         refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
         goto CLEANUP;
     }
@@ -971,11 +1073,12 @@ tee_att_error_t tee_att_config_t::certify_key(uint8_t *p_ecdsa_blob,
     sgx_status = store_cert_data(m_eid,
                                  (uint32_t*)&tdqe_error,
                                  p_plaintext_data,
+                                 plaintext_data_size,
                                  certification_key_type,
                                  p_encrypted_ppid,
                                  encrypted_ppid_size,
                                  p_ecdsa_blob,
-                                 SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK);
+                                 tdqe_blob_size);
     if (SGX_SUCCESS != sgx_status) {
         SE_TRACE(SE_TRACE_ERROR, "Failed call into the TDQE. 0x%04x\n", sgx_status);
         // /todo:  May want to retry on SGX_ERROR_ENCLAVE_LOST caused by power transition
@@ -989,7 +1092,7 @@ tee_att_error_t tee_att_config_t::certify_key(uint8_t *p_ecdsa_blob,
     } else {
         SE_TRACE(SE_TRACE_NOTICE, "Certification done.  Store updated ECDSA blob to disk.\n");
         refqt_ret = write_persistent_data(p_ecdsa_blob,
-                                          SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK,
+                                          tdqe_blob_size,
                                           get_blob_label_for_algorithm(m_att_key_algorithm_id));
         if (refqt_ret != TEE_ATT_SUCCESS) {
             // This should not be a critical failure but a warning.  The ECDSA key is still in memory.
@@ -1045,10 +1148,10 @@ tee_att_error_t tee_att_config_t::certify_key(uint8_t *p_ecdsa_blob,
  *         or was already verified once.
  *
  */
-tee_att_error_t tee_att_config_t::init_quote(sgx_ql_cert_key_type_t certification_key_type,
-                                             sgx_target_info_t *p_qe_target_info,
-                                             bool refresh_att_key,
-                                             ref_sha256_hash_t *p_pub_key_id)
+tee_att_error_t tee_att_config_t::legacy_init_quote(sgx_ql_cert_key_type_t certification_key_type,
+                                                    sgx_target_info_t *p_qe_target_info,
+                                                    bool refresh_att_key,
+                                                    ref_sha256_hash_t *p_pub_key_id)
 {
     switch (m_att_key_algorithm_id)
     {
@@ -1058,6 +1161,422 @@ tee_att_error_t tee_att_config_t::init_quote(sgx_ql_cert_key_type_t certificatio
         return mldsa_init_quote(certification_key_type, p_qe_target_info, refresh_att_key, p_pub_key_id);
     default:
         return TEE_ATT_UNSUPPORTED_ATT_KEY_ID;
+    }
+}
+
+tee_att_error_t tee_att_config_t::trusted_tdx_only_init_quote(sgx_ql_cert_key_type_t certification_key_type,
+                                                              sgx_target_info_t *p_qe_target_info,
+                                                              bool refresh_att_key,
+                                                              ref_sha256_hash_t *p_pub_key_id)
+{
+    tee_att_error_t refqt_ret = TEE_ATT_SUCCESS;
+    sgx_status_t sgx_status = SGX_SUCCESS;
+    tdqe_error_t tdqe_error = TDQE_ERROR_UNEXPECTED;
+    bool is_fresh_loaded = false;
+    bool gen_new_key = false;
+    uint8_t resealed = 0;
+    ref_sha256_hash_t blob_pub_key_id;
+    sgx_report_body_t tdqe_report_body;
+    sgx_report_t tdqe_report;
+    sgx_target_info_t local_target_info;
+    uint32_t blob_size_read = get_tdqe_blob_size_for_algorithm(m_att_key_algorithm_id);
+    int blob_mutex_rc = 0;
+    const uint32_t tdqe_blob_size = get_tdqe_blob_size_for_algorithm(m_att_key_algorithm_id);
+
+    if (m_att_key_algorithm_id != SGX_QL_ALG_MLDSA_65) {
+        SE_TRACE(SE_TRACE_ERROR, "Trusted TDX-only bootstrap is only implemented for ML-DSA-65.\n");
+        return TEE_ATT_UNSUPPORTED_ATT_KEY_ID;
+    }
+
+    if ((NULL == p_qe_target_info) || (NULL == p_pub_key_id)) {
+        return TEE_ATT_ERROR_INVALID_PARAMETER;
+    }
+
+    if (PPID_RSA3072_ENCRYPTED != certification_key_type) {
+        SE_TRACE(SE_TRACE_ERROR, "Invalid certification key type for trusted TDX-only bootstrap.\n");
+        return TEE_ATT_ERROR_INVALID_PARAMETER;
+    }
+
+    SE_TRACE(SE_TRACE_NOTICE, "Initialize trusted TDX-only ML-DSA quote bootstrap.\n");
+
+    refqt_ret = load_qe(&is_fresh_loaded);
+    if (TEE_ATT_SUCCESS != refqt_ret) {
+        return refqt_ret;
+    }
+
+    memset(p_qe_target_info, 0, sizeof(*p_qe_target_info));
+    if (0 != memcpy_s(&p_qe_target_info->attributes,
+                      sizeof(p_qe_target_info->attributes),
+                      &m_attributes.secs_attr,
+                      sizeof(m_attributes.secs_attr))) {
+        return TEE_ATT_ERROR_UNEXPECTED;
+    }
+    if (0 != memcpy_s(&p_qe_target_info->misc_select,
+                      sizeof(p_qe_target_info->misc_select),
+                      &m_attributes.misc_select,
+                      sizeof(m_attributes.misc_select))) {
+        return TEE_ATT_ERROR_UNEXPECTED;
+    }
+
+    memset(&local_target_info, 0, sizeof(local_target_info));
+    if (0 != memcpy_s(&local_target_info.attributes,
+                      sizeof(local_target_info.attributes),
+                      &m_attributes.secs_attr,
+                      sizeof(m_attributes.secs_attr))) {
+        return TEE_ATT_ERROR_UNEXPECTED;
+    }
+    local_target_info.attributes.flags |= SGX_FLAGS_PROVISION_KEY;
+    local_target_info.attributes.flags &= ~SGX_FLAGS_DEBUG;
+    if (0 != memcpy_s(&local_target_info.misc_select,
+                      sizeof(local_target_info.misc_select),
+                      &m_attributes.misc_select,
+                      sizeof(m_attributes.misc_select))) {
+        return TEE_ATT_ERROR_UNEXPECTED;
+    }
+
+    blob_mutex_rc = se_mutex_lock(&m_ecdsa_blob_mutex);
+    if (0 == blob_mutex_rc) {
+        SE_TRACE(SE_TRACE_ERROR, "Failed to lock mutex\n");
+        return TEE_ATT_ERROR_UNEXPECTED;
+    }
+
+    do {
+        if (true == refresh_att_key) {
+            SE_TRACE(SE_TRACE_NOTICE, "Caller requests a new trusted TDX-only ML-DSA key.\n");
+            gen_new_key = true;
+            break;
+        }
+
+        blob_size_read = tdqe_blob_size;
+        refqt_ret = read_persistent_data((uint8_t*)m_ecdsa_blob,
+                                         &blob_size_read,
+                                         get_blob_label_for_algorithm(m_att_key_algorithm_id));
+        if (TEE_ATT_SUCCESS != refqt_ret) {
+            SE_TRACE(SE_TRACE_WARNING, "ML-DSA blob does not exist in persistent storage. Falling back to in-memory cache.\n");
+            refqt_ret = TEE_ATT_SUCCESS;
+        } else if (blob_size_read != tdqe_blob_size) {
+            SE_TRACE(SE_TRACE_WARNING, "Invalid ML-DSA blob size on disk. Regenerating local trusted key.\n");
+            gen_new_key = true;
+            break;
+        }
+
+        memset(&tdqe_report_body, 0, sizeof(tdqe_report_body));
+        memset(&blob_pub_key_id, 0, sizeof(blob_pub_key_id));
+        sgx_status = verify_blob(m_eid,
+                                 (uint32_t*)&tdqe_error,
+                                 (uint8_t*)m_ecdsa_blob,
+                                 tdqe_blob_size,
+                                 &resealed,
+                                 &tdqe_report_body,
+                                 sizeof(blob_pub_key_id),
+                                 (uint8_t*)&blob_pub_key_id);
+        if (SGX_SUCCESS != sgx_status) {
+            refqt_ret = (tee_att_error_t)sgx_status;
+            goto CLEANUP;
+        }
+        if (TDQE_SUCCESS != tdqe_error) {
+            SE_TRACE(SE_TRACE_WARNING, "Invalid trusted ML-DSA blob. Regenerating local trusted key. 0x%04x\n", tdqe_error);
+            gen_new_key = true;
+            break;
+        }
+
+        p_qe_target_info->mr_enclave = tdqe_report_body.mr_enclave;
+        if (0 != memcpy_s(p_pub_key_id, sizeof(*p_pub_key_id), &blob_pub_key_id, sizeof(blob_pub_key_id))) {
+            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+            goto CLEANUP;
+        }
+
+        if (NULL == m_tdqe_report_body) {
+            m_tdqe_report_body = (sgx_report_body_t*)malloc(sizeof(sgx_report_body_t));
+            if (NULL == m_tdqe_report_body) {
+                refqt_ret = TEE_ATT_ERROR_OUT_OF_MEMORY;
+                goto CLEANUP;
+            }
+        }
+        if (0 != memcpy_s(m_tdqe_report_body, sizeof(*m_tdqe_report_body), &tdqe_report_body, sizeof(tdqe_report_body))) {
+            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+            goto CLEANUP;
+        }
+
+        if (NULL == m_qe_id) {
+            m_qe_id = (sgx_key_128bit_t*)malloc(sizeof(sgx_key_128bit_t));
+            if (NULL == m_qe_id) {
+                refqt_ret = TEE_ATT_ERROR_OUT_OF_MEMORY;
+                goto CLEANUP;
+            }
+            refqt_ret = load_id_enclave_get_id(m_qe_id);
+            if (TEE_ATT_SUCCESS != refqt_ret) {
+                goto CLEANUP;
+            }
+        }
+
+        if (resealed) {
+            refqt_ret = write_persistent_data((uint8_t*)m_ecdsa_blob,
+                                              tdqe_blob_size,
+                                              get_blob_label_for_algorithm(m_att_key_algorithm_id));
+            if (refqt_ret != TEE_ATT_SUCCESS) {
+                SE_TRACE(SE_TRACE_WARNING, "Unable to persist resealed trusted ML-DSA blob. Continuing with in-memory cache.\n");
+                refqt_ret = TEE_ATT_SUCCESS;
+            }
+        }
+
+        goto CLEANUP;
+    } while (0);
+
+    if (gen_new_key) {
+        ref_plaintext_mldsa_65_data_sdk_t plaintext_data_mldsa;
+        uint8_t authentication_data[REF_ECDSDA_AUTHENTICATION_DATA_SIZE] =
+            {0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,
+             0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1a,0x1b,0x1c,0x1d,0x1e,0x1f};
+
+        memset(&tdqe_report, 0, sizeof(tdqe_report));
+        sgx_status = gen_att_key(m_eid,
+                                 (uint32_t*)&tdqe_error,
+                                 m_ecdsa_blob,
+                                 tdqe_blob_size,
+                                 static_cast<uint32_t>(m_att_key_algorithm_id),
+                                 &local_target_info,
+                                 &tdqe_report,
+                                 &authentication_data[0],
+                                 sizeof(authentication_data));
+        if (SGX_SUCCESS != sgx_status) {
+            refqt_ret = (tee_att_error_t)sgx_status;
+            goto CLEANUP;
+        }
+        if (TDQE_SUCCESS != tdqe_error) {
+            refqt_ret = (tee_att_error_t)tdqe_error;
+            goto CLEANUP;
+        }
+
+        p_qe_target_info->mr_enclave = tdqe_report.body.mr_enclave;
+        if (NULL == m_tdqe_report_body) {
+            m_tdqe_report_body = (sgx_report_body_t*)malloc(sizeof(sgx_report_body_t));
+            if (NULL == m_tdqe_report_body) {
+                refqt_ret = TEE_ATT_ERROR_OUT_OF_MEMORY;
+                goto CLEANUP;
+            }
+        }
+        if (0 != memcpy_s(m_tdqe_report_body, sizeof(*m_tdqe_report_body), &tdqe_report.body, sizeof(tdqe_report.body))) {
+            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+            goto CLEANUP;
+        }
+
+        if (NULL == m_qe_id) {
+            m_qe_id = (sgx_key_128bit_t*)malloc(sizeof(sgx_key_128bit_t));
+            if (NULL == m_qe_id) {
+                refqt_ret = TEE_ATT_ERROR_OUT_OF_MEMORY;
+                goto CLEANUP;
+            }
+            refqt_ret = load_id_enclave_get_id(m_qe_id);
+            if (TEE_ATT_SUCCESS != refqt_ret) {
+                goto CLEANUP;
+            }
+        }
+
+        memset(&plaintext_data_mldsa, 0, sizeof(plaintext_data_mldsa));
+        if (0 != memcpy_s(&plaintext_data_mldsa.cert_cpu_svn,
+                          sizeof(plaintext_data_mldsa.cert_cpu_svn),
+                          &tdqe_report.body.cpu_svn,
+                          sizeof(tdqe_report.body.cpu_svn))) {
+            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+            goto CLEANUP;
+        }
+        if (0 != memcpy_s(&plaintext_data_mldsa.raw_cpu_svn,
+                          sizeof(plaintext_data_mldsa.raw_cpu_svn),
+                          &tdqe_report.body.cpu_svn,
+                          sizeof(tdqe_report.body.cpu_svn))) {
+            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+            goto CLEANUP;
+        }
+        if (0 != memcpy_s(&plaintext_data_mldsa.qe_report,
+                          sizeof(plaintext_data_mldsa.qe_report),
+                          &tdqe_report,
+                          sizeof(tdqe_report))) {
+            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+            goto CLEANUP;
+        }
+        if (0 != memcpy_s(&plaintext_data_mldsa.qe_id,
+                          sizeof(plaintext_data_mldsa.qe_id),
+                          m_qe_id,
+                          sizeof(*m_qe_id))) {
+            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+            goto CLEANUP;
+        }
+        if (0 != memcpy_s(&plaintext_data_mldsa.pce_target_info,
+                          sizeof(plaintext_data_mldsa.pce_target_info),
+                          &local_target_info,
+                          sizeof(local_target_info))) {
+            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+            goto CLEANUP;
+        }
+        plaintext_data_mldsa.signature_scheme = PCE_NIST_P256_ECDSA_SHA256;
+        plaintext_data_mldsa.certification_key_type = certification_key_type;
+
+        sgx_status = store_cert_data(m_eid,
+                                     (uint32_t*)&tdqe_error,
+                                     reinterpret_cast<uint8_t*>(&plaintext_data_mldsa),
+                                     sizeof(plaintext_data_mldsa),
+                                     certification_key_type,
+                                     NULL,
+                                     0,
+                                     m_ecdsa_blob,
+                                     tdqe_blob_size);
+        if (SGX_SUCCESS != sgx_status) {
+            refqt_ret = (tee_att_error_t)sgx_status;
+            goto CLEANUP;
+        }
+        if (TDQE_SUCCESS != tdqe_error) {
+            refqt_ret = (tee_att_error_t)tdqe_error;
+            goto CLEANUP;
+        }
+
+        memset(&blob_pub_key_id, 0, sizeof(blob_pub_key_id));
+        memset(&tdqe_report_body, 0, sizeof(tdqe_report_body));
+        sgx_status = verify_blob(m_eid,
+                                 (uint32_t*)&tdqe_error,
+                                 (uint8_t*)m_ecdsa_blob,
+                                 tdqe_blob_size,
+                                 &resealed,
+                                 &tdqe_report_body,
+                                 sizeof(blob_pub_key_id),
+                                 (uint8_t*)&blob_pub_key_id);
+        if (SGX_SUCCESS != sgx_status) {
+            refqt_ret = (tee_att_error_t)sgx_status;
+            goto CLEANUP;
+        }
+        if (TDQE_SUCCESS != tdqe_error) {
+            refqt_ret = (tee_att_error_t)tdqe_error;
+            goto CLEANUP;
+        }
+        if (0 != memcpy_s(p_pub_key_id, sizeof(*p_pub_key_id), &blob_pub_key_id, sizeof(blob_pub_key_id))) {
+            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+            goto CLEANUP;
+        }
+
+        refqt_ret = write_persistent_data((uint8_t*)m_ecdsa_blob,
+                                          tdqe_blob_size,
+                                          get_blob_label_for_algorithm(m_att_key_algorithm_id));
+        if (refqt_ret != TEE_ATT_SUCCESS) {
+            SE_TRACE(SE_TRACE_WARNING, "Unable to persist trusted TDX-only ML-DSA blob. Continuing with in-memory cache.\n");
+            refqt_ret = TEE_ATT_SUCCESS;
+        }
+    }
+
+CLEANUP:
+    if (0 != blob_mutex_rc) {
+        int unlock_rc = se_mutex_unlock(&m_ecdsa_blob_mutex);
+        if (0 == unlock_rc) {
+            SE_TRACE(SE_TRACE_ERROR, "Failed to unlock mutex\n");
+            return TEE_ATT_ERROR_UNEXPECTED;
+        }
+    }
+
+    return refqt_ret;
+}
+
+bool tee_att_config_t::uses_legacy_pce_bootstrap() const
+{
+    return m_bootstrap_mode == TEE_ATT_BOOTSTRAP_LEGACY_PCE;
+}
+
+tee_att_error_t tee_att_config_t::validate_legacy_certification_key_type(sgx_ql_cert_key_type_t certification_key_type) const
+{
+    if (!uses_legacy_pce_bootstrap()) {
+        return TEE_ATT_ERROR_UNEXPECTED;
+    }
+
+    if (PPID_RSA3072_ENCRYPTED != certification_key_type) {
+        SE_TRACE(SE_TRACE_ERROR, "Invalid certification key type for legacy PCE bootstrap.\n");
+        return TEE_ATT_ERROR_INVALID_PARAMETER;
+    }
+
+    return TEE_ATT_SUCCESS;
+}
+
+tee_att_error_t tee_att_config_t::legacy_get_pce_target_info(sgx_target_info_t *p_pce_target_info,
+                                                             sgx_isv_svn_t *p_pce_isv_svn)
+{
+    sgx_pce_error_t pce_error;
+
+    if (!uses_legacy_pce_bootstrap() || p_pce_target_info == NULL || p_pce_isv_svn == NULL) {
+        return TEE_ATT_ERROR_INVALID_PARAMETER;
+    }
+
+    SE_TRACE(SE_TRACE_NOTICE, "Call sgx_pce_get_target().\n");
+    pce_error = sgx_pce_get_target(p_pce_target_info, p_pce_isv_svn);
+    if (SGX_PCE_SUCCESS != pce_error) {
+        SE_TRACE(SE_TRACE_ERROR, "Error, call sgx_pce_get_target, pce_error:%04x.\n", pce_error);
+        return translate_pce_errors(pce_error);
+    }
+
+    return TEE_ATT_SUCCESS;
+}
+
+tee_att_error_t tee_att_config_t::legacy_pce_sign_report(const sgx_isv_svn_t *p_cert_pce_isv_svn,
+                                                         const sgx_cpu_svn_t *p_cert_cpu_svn,
+                                                         const sgx_report_t *p_qe_report,
+                                                         sgx_ec256_signature_t *p_pce_sig)
+{
+    sgx_pce_error_t pce_error;
+    uint32_t sig_out_size = 0;
+
+    if (!uses_legacy_pce_bootstrap() ||
+        p_cert_pce_isv_svn == NULL ||
+        p_cert_cpu_svn == NULL ||
+        p_qe_report == NULL ||
+        p_pce_sig == NULL) {
+        return TEE_ATT_ERROR_INVALID_PARAMETER;
+    }
+
+    pce_error = sgx_pce_sign_report(const_cast<sgx_isv_svn_t *>(p_cert_pce_isv_svn),
+                                    const_cast<sgx_cpu_svn_t *>(p_cert_cpu_svn),
+                                    const_cast<sgx_report_t *>(p_qe_report),
+                                    reinterpret_cast<uint8_t *>(p_pce_sig),
+                                    sizeof(*p_pce_sig),
+                                    &sig_out_size);
+    if (SGX_PCE_SUCCESS != pce_error) {
+        SE_TRACE(SE_TRACE_ERROR, "Failed to certify the attestation key. PCE Error = 0x%04x.\n", pce_error);
+        return translate_pce_errors(pce_error);
+    }
+
+    if (sig_out_size != sizeof(*p_pce_sig)) {
+        SE_TRACE(SE_TRACE_ERROR, "Unexpected PCE signature size. %u\n", sig_out_size);
+        return TEE_ATT_ERROR_UNEXPECTED;
+    }
+
+    return TEE_ATT_SUCCESS;
+}
+
+tee_att_error_t tee_att_config_t::legacy_get_platform_quote_cert_data(sgx_ql_pck_cert_id_t *p_pck_cert_id,
+                                                                      sgx_cpu_svn_t *p_cert_cpu_svn,
+                                                                      sgx_isv_svn_t *p_cert_pce_isv_svn,
+                                                                      uint32_t *p_cert_data_size,
+                                                                      uint8_t *p_cert_data)
+{
+    if (!uses_legacy_pce_bootstrap()) {
+        return TEE_ATT_ERROR_UNEXPECTED;
+    }
+
+    return get_platform_quote_cert_data(p_pck_cert_id,
+                                        p_cert_cpu_svn,
+                                        p_cert_pce_isv_svn,
+                                        p_cert_data_size,
+                                        p_cert_data);
+}
+
+tee_att_error_t tee_att_config_t::init_quote(sgx_ql_cert_key_type_t certification_key_type,
+                                             sgx_target_info_t *p_qe_target_info,
+                                             bool refresh_att_key,
+                                             ref_sha256_hash_t *p_pub_key_id)
+{
+    switch (m_bootstrap_mode)
+    {
+    case TEE_ATT_BOOTSTRAP_LEGACY_PCE:
+        return legacy_init_quote(certification_key_type, p_qe_target_info, refresh_att_key, p_pub_key_id);
+    case TEE_ATT_BOOTSTRAP_TRUSTED_TDX_ONLY:
+        return trusted_tdx_only_init_quote(certification_key_type, p_qe_target_info, refresh_att_key, p_pub_key_id);
+    default:
+        return TEE_ATT_ERROR_UNEXPECTED;
     }
 }
 
@@ -1077,20 +1596,20 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
     bool gen_new_key = false;
     sgx_psvn_t pce_cert_psvn;
     sgx_ql_pck_cert_id_t pck_cert_id;
-    sgx_pce_error_t pce_error;
     sgx_report_body_t tdqe_report_body;
     uint32_t cert_data_size;
-    sgx_sealed_data_t *p_sealed_ecdsa;
+    tdqe_blob_plaintext_view_t blob_view;
     ref_plaintext_ecdsa_data_sdk_t plaintext_data;
-    ref_plaintext_ecdsa_data_sdk_t *p_seal_data_plain_text;
+    ref_plaintext_mldsa_65_data_sdk_t plaintext_data_mldsa;
     uint8_t encrypted_ppid[REF_RSA_OAEP_3072_MOD_SIZE];
     int blob_mutex_rc = 0;
     bool is_fresh_loaded = false;
+    const uint32_t tdqe_blob_size = get_tdqe_blob_size_for_algorithm(m_att_key_algorithm_id);
 
     // Verify inputs
-    if (PPID_RSA3072_ENCRYPTED != certification_key_type) {
-        SE_TRACE(SE_TRACE_ERROR, "Invalid certification key type.\n");
-        return(TEE_ATT_ERROR_INVALID_PARAMETER);
+    refqt_ret = validate_legacy_certification_key_type(certification_key_type);
+    if (TEE_ATT_SUCCESS != refqt_ret) {
+        return refqt_ret;
     }
 
     if (NULL == p_qe_target_info) {
@@ -1099,11 +1618,8 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
     }
 
     // Get PCE Target Info
-    SE_TRACE(SE_TRACE_NOTICE, "Call sgx_pce_get_target().\n");
-    pce_error = sgx_pce_get_target(&pce_target_info, &pce_isv_svn);
-    if (SGX_PCE_SUCCESS != pce_error) {
-        SE_TRACE(SE_TRACE_ERROR, "Error, call sgx_pce_get_target [%s], pce_error:%04x.\n", __FUNCTION__, pce_error);
-        refqt_ret = translate_pce_errors(pce_error);
+    refqt_ret = legacy_get_pce_target_info(&pce_target_info, &pce_isv_svn);
+    if (TEE_ATT_SUCCESS != refqt_ret) {
         goto CLEANUP;
     }
 
@@ -1146,7 +1662,7 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
             gen_new_key = true;
             break;
         }
-        uint32_t blob_size_read = sizeof(m_ecdsa_blob);
+        uint32_t blob_size_read = tdqe_blob_size;
         // Get ECDSA Blob if exists
         SE_TRACE(SE_TRACE_NOTICE, "Read ECDSA blob.\n");
         refqt_ret = read_persistent_data((uint8_t*)m_ecdsa_blob,
@@ -1157,9 +1673,9 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
             SE_TRACE(SE_TRACE_WARNING, "ECDSA Blob doesn't exist is persistent storage.  Try to use the cached version.\n");
             refqt_ret = TEE_ATT_SUCCESS;
         }
-        else if (blob_size_read != sizeof(m_ecdsa_blob)) {
+        else if (blob_size_read != tdqe_blob_size) {
             // If the blob was successfully read from persistent storage, verify its size.
-            SE_TRACE(SE_TRACE_WARNING, "Invalid ECDSA Blob file size. blob_size_read = %uld, sizeof(g_ecdsa_blob) = %uld.  Since caller requested use any key, generate a new key.\n", blob_size_read, (uint32_t)sizeof(m_ecdsa_blob));
+            SE_TRACE(SE_TRACE_WARNING, "Invalid ECDSA Blob file size. blob_size_read = %uld, expected_blob_size = %uld.  Since caller requested use any key, generate a new key.\n", blob_size_read, tdqe_blob_size);
             gen_new_key = true;
             break;
         }
@@ -1168,7 +1684,7 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
         sgx_status = verify_blob(m_eid,
                                  (uint32_t*)&tdqe_error,
                                  (uint8_t*)m_ecdsa_blob,
-                                 sizeof(m_ecdsa_blob),
+                                 tdqe_blob_size,
                                  &resealed,
                                  &tdqe_report_body,
                                  sizeof(blob_ecdsa_id),
@@ -1203,7 +1719,7 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
         if (resealed) {
             SE_TRACE(SE_TRACE_NOTICE, "ECDSA Blob was resealed. Store it disk.\n");
             refqt_ret = write_persistent_data((uint8_t *)m_ecdsa_blob,
-                                              sizeof(m_ecdsa_blob),
+                                              tdqe_blob_size,
                                               get_blob_label_for_algorithm(m_att_key_algorithm_id));
             if (refqt_ret != TEE_ATT_SUCCESS) {
                 // Don't need to error since the blob is still good in memory.
@@ -1218,31 +1734,34 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
             break;
         }
 
-        p_sealed_ecdsa = reinterpret_cast<sgx_sealed_data_t *>(m_ecdsa_blob);
-        p_seal_data_plain_text = reinterpret_cast<ref_plaintext_ecdsa_data_sdk_t *>(m_ecdsa_blob + sizeof(sgx_sealed_data_t) + p_sealed_ecdsa->plain_text_offset);
+        if (!get_tdqe_blob_plaintext_view(m_ecdsa_blob, tdqe_blob_size, &blob_view)) {
+            SE_TRACE(SE_TRACE_ERROR, "Unsupported TDQE blob format in cache.\n");
+            gen_new_key = true;
+            break;
+        }
         // Check to see if the requested certification type matches the type in the blob.
-        if(p_seal_data_plain_text->certification_key_type != certification_key_type) {
+        if(*blob_view.certification_key_type != certification_key_type) {
             SE_TRACE(SE_TRACE_WARNING, "Requested certificaiton_key_type doesn't match existing blob's type,  Gen and certify new key.\n");
             gen_new_key = true;
             break;
         }
         //QE's TCB has increased, (a decrease would cause a blob verification failure) then catch it here and generate a
         //new key
-        if((tdqe_report_body.isv_svn > p_seal_data_plain_text->cert_qe_isv_svn) ||
-           (0 != memcmp(&p_seal_data_plain_text->raw_cpu_svn, &tdqe_report_body.cpu_svn, sizeof(p_seal_data_plain_text->raw_cpu_svn)))) {
+        if((tdqe_report_body.isv_svn > *blob_view.cert_qe_isv_svn) ||
+           (0 != memcmp(blob_view.raw_cpu_svn, &tdqe_report_body.cpu_svn, sizeof(*blob_view.raw_cpu_svn)))) {
             SE_TRACE(SE_TRACE_WARNING, "Platform TCB has increased, gen and certify new key.\n");
             gen_new_key = true;
             break;
         }
         // PCE's raw isvsvn changed, catch it here and generate a new key
-        if (m_raw_pce_isvsvn != p_seal_data_plain_text->raw_pce_info.pce_isv_svn) {
+        if (m_raw_pce_isvsvn != blob_view.raw_pce_info->pce_isv_svn) {
             SE_TRACE(SE_TRACE_WARNING, "PCE's raw isvsvn changed, gen and certify new key.\n");
             gen_new_key = true;
             break;
         }
         ///todo: Probably don't need this check.  PCE target info changes shouldn't require re-certification unless there is OwnerID changes.
         //but is safe since it will just uneccessarily cause key regeneration and recertificaiton.
-        if(0 != memcmp(&p_seal_data_plain_text->pce_target_info, &pce_target_info, sizeof(p_seal_data_plain_text->pce_target_info))) {
+        if(0 != memcmp(blob_view.pce_target_info, &pce_target_info, sizeof(*blob_view.pce_target_info))) {
             SE_TRACE(SE_TRACE_WARNING, "Recertification is not available since PCE TargetInfo changed. Gen and certify new key.\n");
             gen_new_key = true;
             break;
@@ -1296,71 +1815,111 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
         pck_cert_id.p_encrypted_ppid = encrypted_ppid;
         pck_cert_id.encrypted_ppid_size = REF_RSA_OAEP_3072_MOD_SIZE;
         pck_cert_id.crypto_suite = PCE_ALG_RSA_OAEP_3072;
-        pck_cert_id.pce_id = p_seal_data_plain_text->cert_pce_info.pce_id;
-        refqt_ret = get_platform_quote_cert_data(&pck_cert_id,
-                                                 &pce_cert_psvn.cpu_svn,
-                                                 &pce_cert_psvn.isv_svn,
-                                                 &cert_data_size,
-                                                 NULL);
+        pck_cert_id.pce_id = blob_view.cert_pce_info->pce_id;
+        refqt_ret = legacy_get_platform_quote_cert_data(&pck_cert_id,
+                                                        &pce_cert_psvn.cpu_svn,
+                                                        &pce_cert_psvn.isv_svn,
+                                                        &cert_data_size,
+                                                        NULL);
         if (refqt_ret != TEE_ATT_SUCCESS) {
             if (refqt_ret != TEE_ATT_PLATFORM_LIB_UNAVAILABLE) {
                 // The dependent library was found but it returned an error
                 goto CLEANUP;
             }
             refqt_ret = TEE_ATT_SUCCESS;
-            if(pce_isv_svn > p_seal_data_plain_text->cert_pce_info.pce_isv_svn) {
+            if(pce_isv_svn > blob_view.cert_pce_info->pce_isv_svn) {
                 SE_TRACE(SE_TRACE_NOTICE, "Using raw-PCE_ISVSVN to certify the key and it has increased. Recertify.\n");
 
                 // Use the raw TCB of the platform and the EncPPID certification type
                 pce_cert_psvn.cpu_svn = tdqe_report_body.cpu_svn;
                 pce_cert_psvn.isv_svn = pce_isv_svn;
-                // Set up the certification data to update the blob with.
-                memset(&plaintext_data, 0, sizeof(plaintext_data));
-                if(0 != memcpy_s(&plaintext_data.cert_cpu_svn, sizeof(plaintext_data.cert_cpu_svn),
-                                 &pce_cert_psvn.cpu_svn, sizeof(pce_cert_psvn.cpu_svn))) {
-                    refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                    goto CLEANUP;
+                if (m_att_key_algorithm_id == SGX_QL_ALG_ECDSA_P256) {
+                    memset(&plaintext_data, 0, sizeof(plaintext_data));
+                    if(0 != memcpy_s(&plaintext_data.cert_cpu_svn, sizeof(plaintext_data.cert_cpu_svn),
+                                     &pce_cert_psvn.cpu_svn, sizeof(pce_cert_psvn.cpu_svn))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    plaintext_data.cert_pce_info.pce_isv_svn = pce_cert_psvn.isv_svn;
+                    plaintext_data.cert_pce_info.pce_id = blob_view.cert_pce_info->pce_id;
+                    if(0 != memcpy_s(&plaintext_data.raw_cpu_svn, sizeof(plaintext_data.raw_cpu_svn),
+                                     &tdqe_report_body.cpu_svn, sizeof(tdqe_report_body.cpu_svn))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    plaintext_data.raw_pce_info.pce_isv_svn = pce_isv_svn;
+                    plaintext_data.raw_pce_info.pce_id = blob_view.cert_pce_info->pce_id;
+                    if(0 != memcpy_s(&plaintext_data.qe_report, sizeof(plaintext_data.qe_report),
+                                     blob_view.qe_report, sizeof(*blob_view.qe_report))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    if (0 != memcpy_s(&plaintext_data.qe_id, sizeof(plaintext_data.qe_id),
+                        m_qe_id, sizeof(*m_qe_id))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    plaintext_data.signature_scheme = *blob_view.signature_scheme;
+                    if(0 != memcpy_s(&plaintext_data.pce_target_info, sizeof(plaintext_data.pce_target_info),
+                                     &pce_target_info, sizeof(pce_target_info))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    plaintext_data.certification_key_type = certification_key_type;
+                    refqt_ret = certify_key(m_ecdsa_blob,
+                                            reinterpret_cast<uint8_t*>(&plaintext_data),
+                                            sizeof(plaintext_data),
+                                            NULL,
+                                            0,
+                                            certification_key_type);
+                } else {
+                    memset(&plaintext_data_mldsa, 0, sizeof(plaintext_data_mldsa));
+                    if(0 != memcpy_s(&plaintext_data_mldsa.cert_cpu_svn, sizeof(plaintext_data_mldsa.cert_cpu_svn),
+                                     &pce_cert_psvn.cpu_svn, sizeof(pce_cert_psvn.cpu_svn))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    plaintext_data_mldsa.cert_pce_info.pce_isv_svn = pce_cert_psvn.isv_svn;
+                    plaintext_data_mldsa.cert_pce_info.pce_id = blob_view.cert_pce_info->pce_id;
+                    if(0 != memcpy_s(&plaintext_data_mldsa.raw_cpu_svn, sizeof(plaintext_data_mldsa.raw_cpu_svn),
+                                     &tdqe_report_body.cpu_svn, sizeof(tdqe_report_body.cpu_svn))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    plaintext_data_mldsa.raw_pce_info.pce_isv_svn = pce_isv_svn;
+                    plaintext_data_mldsa.raw_pce_info.pce_id = blob_view.cert_pce_info->pce_id;
+                    if(0 != memcpy_s(&plaintext_data_mldsa.qe_report, sizeof(plaintext_data_mldsa.qe_report),
+                                     blob_view.qe_report, sizeof(*blob_view.qe_report))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    if (0 != memcpy_s(&plaintext_data_mldsa.qe_id, sizeof(plaintext_data_mldsa.qe_id),
+                        m_qe_id, sizeof(*m_qe_id))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    plaintext_data_mldsa.signature_scheme = *blob_view.signature_scheme;
+                    if(0 != memcpy_s(&plaintext_data_mldsa.pce_target_info, sizeof(plaintext_data_mldsa.pce_target_info),
+                                     &pce_target_info, sizeof(pce_target_info))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    plaintext_data_mldsa.certification_key_type = certification_key_type;
+                    refqt_ret = certify_key(m_ecdsa_blob,
+                                            reinterpret_cast<uint8_t*>(&plaintext_data_mldsa),
+                                            sizeof(plaintext_data_mldsa),
+                                            NULL,
+                                            0,
+                                            certification_key_type);
                 }
-                plaintext_data.cert_pce_info.pce_isv_svn = pce_cert_psvn.isv_svn;
-                plaintext_data.cert_pce_info.pce_id = p_seal_data_plain_text->cert_pce_info.pce_id;
-                if(0 != memcpy_s(&plaintext_data.raw_cpu_svn, sizeof(plaintext_data.raw_cpu_svn),
-                                 &tdqe_report_body.cpu_svn, sizeof(tdqe_report_body.cpu_svn))) {
-                    refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                    goto CLEANUP;
-                }
-                plaintext_data.raw_pce_info.pce_isv_svn = pce_isv_svn;
-                plaintext_data.raw_pce_info.pce_id = p_seal_data_plain_text->cert_pce_info.pce_id;
-                // For recertification, pull out out the certification data from the blob that doesn't need to change.
-                if(0 != memcpy_s(&plaintext_data.qe_report, sizeof(plaintext_data.qe_report),
-                                 &p_seal_data_plain_text->qe_report, sizeof(p_seal_data_plain_text->qe_report))) {
-                    refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                    goto CLEANUP;
-                }
-                if (0 != memcpy_s(&plaintext_data.qe_id, sizeof(plaintext_data.qe_id),
-                    m_qe_id, sizeof(*m_qe_id))) {
-                    refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                    goto CLEANUP;
-                }
-                plaintext_data.signature_scheme = p_seal_data_plain_text->signature_scheme;  ///todo: Not likely that the signature scheme changed but may want to re-get from PCE. It is just more involved.
-                if(0 != memcpy_s(&plaintext_data.pce_target_info, sizeof(plaintext_data.pce_target_info),
-                                 &pce_target_info, sizeof(pce_target_info))) {
-                    refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                    goto CLEANUP;
-                }
-                plaintext_data.certification_key_type = certification_key_type;  //Cert key request it checked if it changed above.  If changed, recertification is not allowed.
-                refqt_ret = certify_key(m_ecdsa_blob,
-                                        &plaintext_data,
-                                        NULL,
-                                        0,
-                                        certification_key_type);
             }
         }
         else {
             // Check if the returned certification TCB is different than the TCB used to certify the key in the
             // ECDSA blob. If it hasn't changed then continue to use the cert data in the blob.  Otherwise, need to
             // do recertify using the new data.
-            if((pce_cert_psvn.isv_svn != p_seal_data_plain_text->cert_pce_info.pce_isv_svn) ||
-               (0 != memcmp(&pce_cert_psvn.cpu_svn, &p_seal_data_plain_text->cert_cpu_svn, sizeof(pce_cert_psvn.cpu_svn))))
+            if((pce_cert_psvn.isv_svn != blob_view.cert_pce_info->pce_isv_svn) ||
+               (0 != memcmp(&pce_cert_psvn.cpu_svn, blob_view.cert_cpu_svn, sizeof(pce_cert_psvn.cpu_svn))))
             {
                 SE_TRACE(SE_TRACE_NOTICE, "The Cert TCB value returned by the platform library is different than the value used to certify the key.  Recertify.\n");
 
@@ -1372,37 +1931,78 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
                     goto CLEANUP;
                 }
                 plaintext_data.cert_pce_info.pce_isv_svn = pce_cert_psvn.isv_svn;
-                plaintext_data.cert_pce_info.pce_id = p_seal_data_plain_text->cert_pce_info.pce_id;
+                plaintext_data.cert_pce_info.pce_id = blob_view.cert_pce_info->pce_id;
                 if(0 != memcpy_s(&plaintext_data.raw_cpu_svn, sizeof(plaintext_data.raw_cpu_svn),
                                  &tdqe_report_body.cpu_svn, sizeof(tdqe_report_body.cpu_svn))) {
                     refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
                     goto CLEANUP;
                 }
                 plaintext_data.raw_pce_info.pce_isv_svn = pce_isv_svn;
-                plaintext_data.raw_pce_info.pce_id = p_seal_data_plain_text->cert_pce_info.pce_id;
-                // For recertification, pull out out the certification data from the blob that doesn't need to change.
-                if(0 != memcpy_s(&plaintext_data.qe_report, sizeof(plaintext_data.qe_report),
-                                 &p_seal_data_plain_text->qe_report, sizeof(p_seal_data_plain_text->qe_report))){
-                    refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                    goto CLEANUP;
+                plaintext_data.raw_pce_info.pce_id = blob_view.cert_pce_info->pce_id;
+                if (m_att_key_algorithm_id == SGX_QL_ALG_ECDSA_P256) {
+                    if(0 != memcpy_s(&plaintext_data.qe_report, sizeof(plaintext_data.qe_report),
+                                     blob_view.qe_report, sizeof(*blob_view.qe_report))){
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    if (0 != memcpy_s(&plaintext_data.qe_id, sizeof(plaintext_data.qe_id),
+                        m_qe_id, sizeof(*m_qe_id))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    plaintext_data.signature_scheme = *blob_view.signature_scheme;
+                    if(0 != memcpy_s(&plaintext_data.pce_target_info, sizeof(plaintext_data.pce_target_info),
+                                     &pce_target_info, sizeof(pce_target_info))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    plaintext_data.certification_key_type = certification_key_type;
+                    refqt_ret = certify_key(m_ecdsa_blob,
+                                            reinterpret_cast<uint8_t*>(&plaintext_data),
+                                            sizeof(plaintext_data),
+                                            NULL,
+                                            0,
+                                            certification_key_type);
+                } else {
+                    memset(&plaintext_data_mldsa, 0, sizeof(plaintext_data_mldsa));
+                    if(0 != memcpy_s(&plaintext_data_mldsa.cert_cpu_svn, sizeof(plaintext_data_mldsa.cert_cpu_svn),
+                                     &pce_cert_psvn.cpu_svn, sizeof(pce_cert_psvn.cpu_svn))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    plaintext_data_mldsa.cert_pce_info.pce_isv_svn = pce_cert_psvn.isv_svn;
+                    plaintext_data_mldsa.cert_pce_info.pce_id = blob_view.cert_pce_info->pce_id;
+                    if(0 != memcpy_s(&plaintext_data_mldsa.raw_cpu_svn, sizeof(plaintext_data_mldsa.raw_cpu_svn),
+                                     &tdqe_report_body.cpu_svn, sizeof(tdqe_report_body.cpu_svn))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    plaintext_data_mldsa.raw_pce_info.pce_isv_svn = pce_isv_svn;
+                    plaintext_data_mldsa.raw_pce_info.pce_id = blob_view.cert_pce_info->pce_id;
+                    if(0 != memcpy_s(&plaintext_data_mldsa.qe_report, sizeof(plaintext_data_mldsa.qe_report),
+                                     blob_view.qe_report, sizeof(*blob_view.qe_report))){
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    if (0 != memcpy_s(&plaintext_data_mldsa.qe_id, sizeof(plaintext_data_mldsa.qe_id),
+                        m_qe_id, sizeof(*m_qe_id))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    plaintext_data_mldsa.signature_scheme = *blob_view.signature_scheme;
+                    if(0 != memcpy_s(&plaintext_data_mldsa.pce_target_info, sizeof(plaintext_data_mldsa.pce_target_info),
+                                     &pce_target_info, sizeof(pce_target_info))) {
+                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                        goto CLEANUP;
+                    }
+                    plaintext_data_mldsa.certification_key_type = certification_key_type;
+                    refqt_ret = certify_key(m_ecdsa_blob,
+                                            reinterpret_cast<uint8_t*>(&plaintext_data_mldsa),
+                                            sizeof(plaintext_data_mldsa),
+                                            NULL,
+                                            0,
+                                            certification_key_type);
                 }
-                if (0 != memcpy_s(&plaintext_data.qe_id, sizeof(plaintext_data.qe_id),
-                    m_qe_id, sizeof(*m_qe_id))) {
-                    refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                    goto CLEANUP;
-                }
-                plaintext_data.signature_scheme = p_seal_data_plain_text->signature_scheme;  ///todo: Not likely that the signature scheme changed but may want to re-get from PCE. It is just more involved.
-                if(0 != memcpy_s(&plaintext_data.pce_target_info, sizeof(plaintext_data.pce_target_info),
-                                 &pce_target_info, sizeof(pce_target_info))) {
-                    refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                    goto CLEANUP;
-                }
-                plaintext_data.certification_key_type = certification_key_type;  //Cert key request it checked if it changed above.  If changed, recertification is not allowed.
-                refqt_ret = certify_key(m_ecdsa_blob,
-                                        &plaintext_data,
-                                        NULL,
-                                        0,
-                                        certification_key_type);
             }
         }
     } while (0);
@@ -1432,7 +2032,7 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
         sgx_status = gen_att_key(m_eid,
                                  (uint32_t*)&tdqe_error,
                                  m_ecdsa_blob,
-                                 SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK,
+                                 tdqe_blob_size,
                                  static_cast<uint32_t>(m_att_key_algorithm_id),
                                  &pce_target_info,
                                  &tdqe_report,
@@ -1486,10 +2086,14 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
 
         // Certify the key
         // Get the certification data from the platform, if available
-        p_sealed_ecdsa = reinterpret_cast<sgx_sealed_data_t *>(m_ecdsa_blob);
-        p_seal_data_plain_text = reinterpret_cast<ref_plaintext_ecdsa_data_sdk_t *>(m_ecdsa_blob + sizeof(sgx_sealed_data_t) + p_sealed_ecdsa->plain_text_offset);
+        if (!get_tdqe_blob_plaintext_view(m_ecdsa_blob, tdqe_blob_size, &blob_view)) {
+            SE_TRACE(SE_TRACE_ERROR, "Unsupported TDQE blob format.\n");
+            refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
+            goto CLEANUP;
+        }
         cert_data_size = 0;
         memset(&plaintext_data, 0, sizeof(plaintext_data));
+        memset(&plaintext_data_mldsa, 0, sizeof(plaintext_data_mldsa));
         pck_cert_id.p_qe3_id = (uint8_t*)m_qe_id;
         pck_cert_id.qe3_id_size = sizeof(*m_qe_id);
         pck_cert_id.p_platform_cpu_svn = &tdqe_report.body.cpu_svn;
@@ -1498,11 +2102,11 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
         pck_cert_id.encrypted_ppid_size = REF_RSA_OAEP_3072_MOD_SIZE;
         pck_cert_id.crypto_suite = PCE_ALG_RSA_OAEP_3072;
         pck_cert_id.pce_id = m_pce_info.pce_id;
-        refqt_ret = get_platform_quote_cert_data(&pck_cert_id,
-                                                 &pce_cert_psvn.cpu_svn,
-                                                 &pce_cert_psvn.isv_svn,
-                                                 &cert_data_size,
-                                                 NULL);
+        refqt_ret = legacy_get_platform_quote_cert_data(&pck_cert_id,
+                                                        &pce_cert_psvn.cpu_svn,
+                                                        &pce_cert_psvn.isv_svn,
+                                                        &cert_data_size,
+                                                        NULL);
         if (refqt_ret != TEE_ATT_SUCCESS) {
             if (refqt_ret != TEE_ATT_PLATFORM_LIB_UNAVAILABLE) {
                 // The dependent library was found but it returned an error
@@ -1515,45 +2119,86 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
             pce_cert_psvn.isv_svn = pce_isv_svn;
         }
 
-        // Set up the certification data and update the ECDSA Blob.
+        // Set up the certification data and update the attestation-key blob.
         // The TDQE will verify these plaintext parameters, add some more plaintext values, add the secret values and
         // generate a sealed blob.
-        if(0 != memcpy_s(&plaintext_data.cert_cpu_svn, sizeof(plaintext_data.cert_cpu_svn),
-                         &pce_cert_psvn.cpu_svn, sizeof(pce_cert_psvn.cpu_svn))) {
-            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-            goto CLEANUP;
+        if (m_att_key_algorithm_id == SGX_QL_ALG_ECDSA_P256) {
+            if(0 != memcpy_s(&plaintext_data.cert_cpu_svn, sizeof(plaintext_data.cert_cpu_svn),
+                             &pce_cert_psvn.cpu_svn, sizeof(pce_cert_psvn.cpu_svn))) {
+                refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                goto CLEANUP;
+            }
+            plaintext_data.cert_pce_info.pce_isv_svn = pce_cert_psvn.isv_svn;
+            plaintext_data.cert_pce_info.pce_id = 0;
+            if(0 != memcpy_s(&plaintext_data.raw_cpu_svn, sizeof(plaintext_data.raw_cpu_svn),
+                             &tdqe_report.body.cpu_svn, sizeof(tdqe_report.body.cpu_svn))) {
+                refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                goto CLEANUP;
+            }
+            plaintext_data.raw_pce_info.pce_isv_svn = m_pce_info.pce_isv_svn;
+            plaintext_data.raw_pce_info.pce_id = m_pce_info.pce_id;
+            if(0 != memcpy_s(&plaintext_data.qe_report, sizeof(plaintext_data.qe_report),
+                             &tdqe_report, sizeof(tdqe_report))) {
+                refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                goto CLEANUP;
+            }
+            if (0 != memcpy_s(&plaintext_data.qe_id, sizeof(plaintext_data.qe_id),
+                m_qe_id, sizeof(*m_qe_id))) {
+                refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                goto CLEANUP;
+            }
+            plaintext_data.signature_scheme = PCE_NIST_P256_ECDSA_SHA256;
+            if(0 != memcpy_s(&plaintext_data.pce_target_info, sizeof(plaintext_data.pce_target_info),
+                             &pce_target_info, sizeof(pce_target_info))) {
+                refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                goto CLEANUP;
+            }
+            plaintext_data.certification_key_type = certification_key_type;
+            refqt_ret = certify_key(m_ecdsa_blob,
+                                    reinterpret_cast<uint8_t*>(&plaintext_data),
+                                    sizeof(plaintext_data),
+                                    encrypted_ppid,
+                                    REF_RSA_OAEP_3072_MOD_SIZE,
+                                    certification_key_type);
+        } else {
+            if(0 != memcpy_s(&plaintext_data_mldsa.cert_cpu_svn, sizeof(plaintext_data_mldsa.cert_cpu_svn),
+                             &pce_cert_psvn.cpu_svn, sizeof(pce_cert_psvn.cpu_svn))) {
+                refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                goto CLEANUP;
+            }
+            plaintext_data_mldsa.cert_pce_info.pce_isv_svn = pce_cert_psvn.isv_svn;
+            plaintext_data_mldsa.cert_pce_info.pce_id = 0;
+            if(0 != memcpy_s(&plaintext_data_mldsa.raw_cpu_svn, sizeof(plaintext_data_mldsa.raw_cpu_svn),
+                             &tdqe_report.body.cpu_svn, sizeof(tdqe_report.body.cpu_svn))) {
+                refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                goto CLEANUP;
+            }
+            plaintext_data_mldsa.raw_pce_info.pce_isv_svn = m_pce_info.pce_isv_svn;
+            plaintext_data_mldsa.raw_pce_info.pce_id = m_pce_info.pce_id;
+            if(0 != memcpy_s(&plaintext_data_mldsa.qe_report, sizeof(plaintext_data_mldsa.qe_report),
+                             &tdqe_report, sizeof(tdqe_report))) {
+                refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                goto CLEANUP;
+            }
+            if (0 != memcpy_s(&plaintext_data_mldsa.qe_id, sizeof(plaintext_data_mldsa.qe_id),
+                m_qe_id, sizeof(*m_qe_id))) {
+                refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                goto CLEANUP;
+            }
+            plaintext_data_mldsa.signature_scheme = PCE_NIST_P256_ECDSA_SHA256;
+            if(0 != memcpy_s(&plaintext_data_mldsa.pce_target_info, sizeof(plaintext_data_mldsa.pce_target_info),
+                             &pce_target_info, sizeof(pce_target_info))) {
+                refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                goto CLEANUP;
+            }
+            plaintext_data_mldsa.certification_key_type = certification_key_type;
+            refqt_ret = certify_key(m_ecdsa_blob,
+                                    reinterpret_cast<uint8_t*>(&plaintext_data_mldsa),
+                                    sizeof(plaintext_data_mldsa),
+                                    encrypted_ppid,
+                                    REF_RSA_OAEP_3072_MOD_SIZE,
+                                    certification_key_type);
         }
-        plaintext_data.cert_pce_info.pce_isv_svn = pce_cert_psvn.isv_svn;
-        plaintext_data.cert_pce_info.pce_id = 0;
-        if(0 != memcpy_s(&plaintext_data.raw_cpu_svn, sizeof(plaintext_data.raw_cpu_svn),
-                         &tdqe_report.body.cpu_svn, sizeof(tdqe_report.body.cpu_svn))) {
-            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-            goto CLEANUP;
-        }
-        plaintext_data.raw_pce_info.pce_isv_svn = m_pce_info.pce_isv_svn;
-        plaintext_data.raw_pce_info.pce_id = m_pce_info.pce_id;
-        if(0 != memcpy_s(&plaintext_data.qe_report, sizeof(plaintext_data.qe_report),
-                         &tdqe_report, sizeof(tdqe_report))) {
-            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-            goto CLEANUP;
-        }
-        if (0 != memcpy_s(&plaintext_data.qe_id, sizeof(plaintext_data.qe_id),
-            m_qe_id, sizeof(*m_qe_id))) {
-            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-            goto CLEANUP;
-        }
-        plaintext_data.signature_scheme = PCE_NIST_P256_ECDSA_SHA256;
-        if(0 != memcpy_s(&plaintext_data.pce_target_info, sizeof(plaintext_data.pce_target_info),
-                         &pce_target_info, sizeof(pce_target_info))) {
-            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-            goto CLEANUP;
-        }
-        plaintext_data.certification_key_type = certification_key_type;
-        refqt_ret = certify_key(m_ecdsa_blob,
-                                &plaintext_data,
-                                encrypted_ppid,
-                                REF_RSA_OAEP_3072_MOD_SIZE,
-                                certification_key_type);
         if (TEE_ATT_SUCCESS != refqt_ret) {
             SE_TRACE(SE_TRACE_ERROR, "Failed to cerify key.\n");
             goto CLEANUP;
@@ -1586,11 +2231,12 @@ tee_att_error_t tee_att_config_t::mldsa_init_quote(sgx_ql_cert_key_type_t certif
                                                    bool refresh_att_key,
                                                    ref_sha256_hash_t *p_pub_key_id)
 {
-    (void)certification_key_type;
-    (void)p_qe_target_info;
-    (void)refresh_att_key;
-    (void)p_pub_key_id;
-    return TEE_ATT_UNSUPPORTED_ATT_KEY_ID;
+    // Reuse the common TDQE-facing path so ML-DSA reaches the backend boundary.
+    // The TDQE still rejects ML-DSA cryptographic operations explicitly.
+    return ecdsa_init_quote(certification_key_type,
+                            p_qe_target_info,
+                            refresh_att_key,
+                            p_pub_key_id);
 }
 
 /**
@@ -1631,19 +2277,19 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
     sgx_status_t sgx_status = SGX_SUCCESS;
     tdqe_error_t tdqe_error = TDQE_ERROR_UNEXPECTED;
     uint32_t cert_data_size;
-    sgx_sealed_data_t *p_sealed_ecdsa;
-    ref_plaintext_ecdsa_data_sdk_t *p_seal_data_plain_text;
+    tdqe_blob_plaintext_view_t blob_view;
     sgx_psvn_t pce_cert_psvn;
     uint8_t resealed = 0;
     sgx_ql_pck_cert_id_t pck_cert_id;
     uint32_t blob_size_read;
     int blob_mutex_rc = 0;
+    const uint32_t tdqe_blob_size = get_tdqe_blob_size_for_algorithm(m_att_key_algorithm_id);
 
     // Verify inputs
     // Only RSA-3072-OAEP Encrypted PPID certification type in the reference.
-    if (PPID_RSA3072_ENCRYPTED != certification_key_type) {
-        SE_TRACE(SE_TRACE_ERROR, "Invalid certification key type.");
-        return(TEE_ATT_ERROR_INVALID_PARAMETER);
+    refqt_ret = validate_legacy_certification_key_type(certification_key_type);
+    if (TEE_ATT_SUCCESS != refqt_ret) {
+        return refqt_ret;
     }
 
     if (NULL == p_quote_size) {
@@ -1664,7 +2310,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
         goto CLEANUP;
     }
 
-    blob_size_read = sizeof(m_ecdsa_blob);
+    blob_size_read = tdqe_blob_size;
     // Get ECDSA Blob if exists
     SE_TRACE(SE_TRACE_NOTICE, "Read ECDSA blob from persistent storage.\n");
     refqt_ret = read_persistent_data((uint8_t*)m_ecdsa_blob,
@@ -1675,9 +2321,9 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
         SE_TRACE(SE_TRACE_WARNING, "ECDSA Blob doesn't exist is persistent storage.  Try to use the cached version.\n");
         refqt_ret = TEE_ATT_SUCCESS;
     }
-    else if (blob_size_read != sizeof(m_ecdsa_blob)) {
+    else if (blob_size_read != tdqe_blob_size) {
         // If the blob was successfully read from persistent storage, verify its size.
-        SE_TRACE(SE_TRACE_ERROR, "Invalid ECDSA Blob file size. blob_size_read = %uld, sizeof(g_ecdsa_blob) = %uld.  Since caller requested use any key, generate a new key.\n", blob_size_read, (uint32_t)sizeof(m_ecdsa_blob));
+        SE_TRACE(SE_TRACE_ERROR, "Invalid ECDSA Blob file size. blob_size_read = %uld, expected_blob_size = %uld.  Since caller requested use any key, generate a new key.\n", blob_size_read, tdqe_blob_size);
         refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
         goto CLEANUP;
     }
@@ -1685,7 +2331,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
     sgx_status = verify_blob(m_eid,
                              (uint32_t*)&tdqe_error,
                              (uint8_t*)m_ecdsa_blob,
-                             sizeof(m_ecdsa_blob),
+                             tdqe_blob_size,
                              &resealed,
                              NULL,
                              0,
@@ -1706,7 +2352,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
     if (resealed) {
         SE_TRACE(SE_TRACE_NOTICE, "ECDSA Blob was resealed. Store it disk.\n");
         refqt_ret = write_persistent_data((uint8_t *)m_ecdsa_blob,
-                                          sizeof(m_ecdsa_blob),
+                                          tdqe_blob_size,
                                           get_blob_label_for_algorithm(m_att_key_algorithm_id));
 
         if (refqt_ret != TEE_ATT_SUCCESS) {
@@ -1723,25 +2369,28 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
 
     SE_TRACE(SE_TRACE_NOTICE, "Successfully verified ECDSA Blob.\n");
 
-    p_sealed_ecdsa = reinterpret_cast<sgx_sealed_data_t *>(m_ecdsa_blob);
-    p_seal_data_plain_text = reinterpret_cast<ref_plaintext_ecdsa_data_sdk_t *>(m_ecdsa_blob + sizeof(sgx_sealed_data_t) + p_sealed_ecdsa->plain_text_offset);
+    if (!get_tdqe_blob_plaintext_view(m_ecdsa_blob, tdqe_blob_size, &blob_view)) {
+        SE_TRACE(SE_TRACE_ERROR, "Unsupported TDQE blob format.\n");
+        refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
+        goto CLEANUP;
+    }
 
     // PCE's raw isvsvn changed, catch it here and generate a new key
-    if (m_raw_pce_isvsvn != p_seal_data_plain_text->raw_pce_info.pce_isv_svn) {
+    if (m_raw_pce_isvsvn != blob_view.raw_pce_info->pce_isv_svn) {
         SE_TRACE(SE_TRACE_ERROR, "PCE's raw isvsvn changed\n");
         refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
         goto CLEANUP;
     }
 
     cert_data_size = 0;
-    pck_cert_id.p_qe3_id = (uint8_t*)&p_seal_data_plain_text->qe_id;
-    pck_cert_id.qe3_id_size = sizeof(p_seal_data_plain_text->qe_id);
-    pck_cert_id.p_platform_cpu_svn = &p_seal_data_plain_text->raw_cpu_svn;
-    pck_cert_id.p_platform_pce_isv_svn = &p_seal_data_plain_text->raw_pce_info.pce_isv_svn;
+    pck_cert_id.p_qe3_id = (uint8_t*)blob_view.qe_id;
+    pck_cert_id.qe3_id_size = sizeof(*blob_view.qe_id);
+    pck_cert_id.p_platform_cpu_svn = const_cast<sgx_cpu_svn_t*>(blob_view.raw_cpu_svn);
+    pck_cert_id.p_platform_pce_isv_svn = const_cast<sgx_isv_svn_t*>(&blob_view.raw_pce_info->pce_isv_svn);
     pck_cert_id.p_encrypted_ppid = NULL;
     pck_cert_id.encrypted_ppid_size = 0;
     pck_cert_id.crypto_suite = PCE_ALG_RSA_OAEP_3072;
-    pck_cert_id.pce_id = p_seal_data_plain_text->cert_pce_info.pce_id;
+    pck_cert_id.pce_id = blob_view.cert_pce_info->pce_id;
     refqt_ret = get_platform_quote_cert_data(&pck_cert_id,
                                              &pce_cert_psvn.cpu_svn,
                                              &pce_cert_psvn.isv_svn,
@@ -1778,9 +2427,9 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
             goto CLEANUP;
         }
         //Check to make sure that the TCBm of from the platform library matches the Cert TCB in the ECDSA blob.
-        if((0 != memcmp(&p_seal_data_plain_text->cert_cpu_svn, &pce_cert_psvn.cpu_svn, sizeof(p_seal_data_plain_text->cert_cpu_svn))) ||
-           (p_seal_data_plain_text->cert_pce_info.pce_isv_svn != pce_cert_psvn.isv_svn)) {
-            SE_TRACE(SE_TRACE_ERROR, "TCBm in ECDSA blob doesn't match the value returned by the platform lib. %d and %d\n", p_seal_data_plain_text->cert_pce_info.pce_isv_svn, pce_cert_psvn.isv_svn);
+        if((0 != memcmp(blob_view.cert_cpu_svn, &pce_cert_psvn.cpu_svn, sizeof(*blob_view.cert_cpu_svn))) ||
+           (blob_view.cert_pce_info->pce_isv_svn != pce_cert_psvn.isv_svn)) {
+            SE_TRACE(SE_TRACE_ERROR, "TCBm in ECDSA blob doesn't match the value returned by the platform lib. %d and %d\n", blob_view.cert_pce_info->pce_isv_svn, pce_cert_psvn.isv_svn);
 
             refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
             goto CLEANUP;
@@ -1815,8 +2464,7 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote_size(sgx_ql_cert_key_type_t ce
                                                        uint32_t* p_quote_size)
 {
     if (PPID_RSA3072_ENCRYPTED != certification_key_type) {
-        SE_TRACE(SE_TRACE_ERROR, "Invalid certification key type.");
-        return(TEE_ATT_ERROR_INVALID_PARAMETER);
+        return TEE_ATT_ERROR_INVALID_PARAMETER;
     }
 
     if (NULL == p_quote_size) {
@@ -1885,18 +2533,18 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
     sgx_status_t sgx_status = SGX_SUCCESS;
     tdqe_error_t tdqe_error = TDQE_ERROR_UNEXPECTED;
     uint8_t resealed = 0;
-    uint32_t blob_size_read = sizeof(m_ecdsa_blob);
+    uint32_t blob_size_read = 0;
     sgx_sha256_hash_t blob_ecdsa_id;
     uint32_t cert_data_size;
     sgx_ql_pck_cert_id_t pck_cert_id;
-    sgx_sealed_data_t *p_sealed_ecdsa;
-    ref_plaintext_ecdsa_data_sdk_t *p_seal_data_plain_text;
+    tdqe_blob_plaintext_view_t blob_view;
     sgx_ql_certification_data_t *p_certification_data = NULL;
     sgx_psvn_t pce_cert_psvn;
     int blob_mutex_rc = 0;
     const sgx_quote4_t *p_quote_v4 = NULL;
     uint32_t signature_size = 0;
     uint16_t quote_version = 0;
+    const uint32_t tdqe_blob_size = get_tdqe_blob_size_for_algorithm(m_att_key_algorithm_id);
 
     //Verify inputs
     if (NULL == p_app_report ||
@@ -1920,7 +2568,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
     }
 
     SE_TRACE(SE_TRACE_NOTICE, "Read and verify ecdsa blob\n");
-    blob_size_read = sizeof(m_ecdsa_blob);
+    blob_size_read = tdqe_blob_size;
     // Get ECDSA Blob if exists
     SE_TRACE(SE_TRACE_NOTICE, "Read ECDSA blob.\n");
     refqt_ret = read_persistent_data((uint8_t*)m_ecdsa_blob,
@@ -1933,9 +2581,9 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
         SE_TRACE(SE_TRACE_WARNING, "ECDSA Blob doesn't exist is persistent storage.  Try to use the cached version.\n");
         refqt_ret = TEE_ATT_SUCCESS;
     }
-    else if (blob_size_read != sizeof(m_ecdsa_blob)) {
+    else if (blob_size_read != tdqe_blob_size) {
         // If the blob was successfully read from persistent storage, verify its size.
-        SE_TRACE(SE_TRACE_ERROR, "Invalid ECDSA Blob file size. blob_size_read = %uld, sizeof(g_ecdsa_blob) = %uld.  Since caller requested use any key, generate a new key.\n", blob_size_read, (uint32_t)sizeof(m_ecdsa_blob));
+        SE_TRACE(SE_TRACE_ERROR, "Invalid ECDSA Blob file size. blob_size_read = %uld, expected_blob_size = %uld.  Since caller requested use any key, generate a new key.\n", blob_size_read, tdqe_blob_size);
         refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
         goto CLEANUP;
     }
@@ -1944,7 +2592,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
     sgx_status = verify_blob(m_eid,
                              (uint32_t*)&tdqe_error,
                              (uint8_t*)m_ecdsa_blob,
-                             sizeof(m_ecdsa_blob),
+                             tdqe_blob_size,
                              &resealed,
                              NULL,
                              sizeof(blob_ecdsa_id),
@@ -1963,7 +2611,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
     if (resealed) {
         SE_TRACE(SE_TRACE_NOTICE, "ECDSA Blob was resealed. Store it disk.\n");
         refqt_ret = write_persistent_data((uint8_t *)m_ecdsa_blob,
-                                          sizeof(m_ecdsa_blob),
+                                          tdqe_blob_size,
                                           get_blob_label_for_algorithm(m_att_key_algorithm_id));
 
         if (refqt_ret != TEE_ATT_SUCCESS) {
@@ -1981,25 +2629,28 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
     PRINT_BYTE_ARRAY(SE_TRACE_DEBUG, (uint8_t *)&blob_ecdsa_id, sizeof(blob_ecdsa_id));
 
     // See if we can get the certification data from the platform library.
-    p_sealed_ecdsa = reinterpret_cast<sgx_sealed_data_t *>(m_ecdsa_blob);
-    p_seal_data_plain_text = reinterpret_cast<ref_plaintext_ecdsa_data_sdk_t *>(m_ecdsa_blob + sizeof(sgx_sealed_data_t) + p_sealed_ecdsa->plain_text_offset);
+    if (!get_tdqe_blob_plaintext_view(m_ecdsa_blob, tdqe_blob_size, &blob_view)) {
+        SE_TRACE(SE_TRACE_ERROR, "Unsupported TDQE blob format.\n");
+        refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
+        goto CLEANUP;
+    }
 
     // PCE's raw isvsvn changed, catch it here and generate a new key
-    if (m_raw_pce_isvsvn != p_seal_data_plain_text->raw_pce_info.pce_isv_svn) {
+    if (m_raw_pce_isvsvn != blob_view.raw_pce_info->pce_isv_svn) {
         SE_TRACE(SE_TRACE_ERROR, "PCE's raw isvsvn changed\n");
         refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
         goto CLEANUP;
     }
 
     cert_data_size = 0;
-    pck_cert_id.p_qe3_id = (uint8_t*)&p_seal_data_plain_text->qe_id;
-    pck_cert_id.qe3_id_size = sizeof(p_seal_data_plain_text->qe_id);
-    pck_cert_id.p_platform_cpu_svn = &p_seal_data_plain_text->raw_cpu_svn;
-    pck_cert_id.p_platform_pce_isv_svn = &p_seal_data_plain_text->raw_pce_info.pce_isv_svn;
+    pck_cert_id.p_qe3_id = (uint8_t*)blob_view.qe_id;
+    pck_cert_id.qe3_id_size = sizeof(*blob_view.qe_id);
+    pck_cert_id.p_platform_cpu_svn = const_cast<sgx_cpu_svn_t*>(blob_view.raw_cpu_svn);
+    pck_cert_id.p_platform_pce_isv_svn = const_cast<sgx_isv_svn_t*>(&blob_view.raw_pce_info->pce_isv_svn);
     pck_cert_id.p_encrypted_ppid = NULL;
     pck_cert_id.encrypted_ppid_size = 0;
     pck_cert_id.crypto_suite = PCE_ALG_RSA_OAEP_3072;
-    pck_cert_id.pce_id = p_seal_data_plain_text->cert_pce_info.pce_id;
+    pck_cert_id.pce_id = blob_view.cert_pce_info->pce_id;
     refqt_ret = get_platform_quote_cert_data(&pck_cert_id,
                                              &pce_cert_psvn.cpu_svn,
                                              &pce_cert_psvn.isv_svn,
@@ -2031,9 +2682,9 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
             goto CLEANUP;
         }
         // Check to make sure that the TCBm of from the platform library matches the Cert TCB in the ECDSA blob.
-        if((0 != memcmp(&p_seal_data_plain_text->cert_cpu_svn, &pce_cert_psvn.cpu_svn, sizeof(p_seal_data_plain_text->cert_cpu_svn))) ||
-           (p_seal_data_plain_text->cert_pce_info.pce_isv_svn != pce_cert_psvn.isv_svn)) {
-            SE_TRACE(SE_TRACE_ERROR, "TCBm in ECDSA blob doesn't match the value returned by the platform lib. %d and %d\n", p_seal_data_plain_text->cert_pce_info.pce_isv_svn, pce_cert_psvn.isv_svn);
+        if((0 != memcmp(blob_view.cert_cpu_svn, &pce_cert_psvn.cpu_svn, sizeof(*blob_view.cert_cpu_svn))) ||
+           (blob_view.cert_pce_info->pce_isv_svn != pce_cert_psvn.isv_svn)) {
+            SE_TRACE(SE_TRACE_ERROR, "TCBm in ECDSA blob doesn't match the value returned by the platform lib. %d and %d\n", blob_view.cert_pce_info->pce_isv_svn, pce_cert_psvn.isv_svn);
             refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
             goto CLEANUP;
         }
@@ -2074,7 +2725,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote(const sgx_report2_t *p_app_rep
     sgx_status = gen_quote(m_eid,
                            (uint32_t*)&tdqe_error,
                            (uint8_t*)m_ecdsa_blob,
-                           (uint32_t)sizeof(m_ecdsa_blob),
+                           tdqe_blob_size,
                            static_cast<uint32_t>(m_att_key_algorithm_id),
                            p_app_report,
                            NULL,
@@ -2148,10 +2799,106 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote(const sgx_report2_t *p_app_rep
                                                   uint8_t *p_quote,
                                                   uint32_t quote_size)
 {
-    (void)p_app_report;
-    (void)p_quote;
-    (void)quote_size;
-    return TEE_ATT_UNSUPPORTED_ATT_KEY_ID;
+    tee_att_error_t refqt_ret = TEE_ATT_SUCCESS;
+    sgx_status_t sgx_status = SGX_SUCCESS;
+    tdqe_error_t tdqe_error = TDQE_ERROR_UNEXPECTED;
+    uint8_t resealed = 0;
+    uint32_t blob_size_read = 0;
+    int blob_mutex_rc = 0;
+    const uint32_t tdqe_blob_size = get_tdqe_blob_size_for_algorithm(m_att_key_algorithm_id);
+
+    if (uses_legacy_pce_bootstrap()) {
+        return ecdsa_get_quote(p_app_report, p_quote, quote_size);
+    }
+
+    if ((NULL == p_app_report) || (NULL == p_quote)) {
+        SE_TRACE(SE_TRACE_ERROR, "Invalid input pointer.\n");
+        return TEE_ATT_ERROR_INVALID_PARAMETER;
+    }
+
+    refqt_ret = load_qe();
+    if (TEE_ATT_SUCCESS != refqt_ret) {
+        goto CLEANUP;
+    }
+
+    blob_mutex_rc = se_mutex_lock(&m_ecdsa_blob_mutex);
+    if (0 == blob_mutex_rc) {
+        SE_TRACE(SE_TRACE_ERROR, "Failed to lock mutex\n");
+        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+        goto CLEANUP;
+    }
+
+    blob_size_read = tdqe_blob_size;
+    refqt_ret = read_persistent_data((uint8_t*)m_ecdsa_blob,
+                                     &blob_size_read,
+                                     get_blob_label_for_algorithm(m_att_key_algorithm_id));
+    if (TEE_ATT_SUCCESS != refqt_ret) {
+        SE_TRACE(SE_TRACE_WARNING, "ML-DSA blob does not exist in persistent storage. Trying in-memory cache.\n");
+        refqt_ret = TEE_ATT_SUCCESS;
+    } else if (blob_size_read != tdqe_blob_size) {
+        refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
+        goto CLEANUP;
+    }
+
+    sgx_status = verify_blob(m_eid,
+                             (uint32_t*)&tdqe_error,
+                             (uint8_t*)m_ecdsa_blob,
+                             tdqe_blob_size,
+                             &resealed,
+                             NULL,
+                             0,
+                             NULL);
+    if (SGX_SUCCESS != sgx_status) {
+        refqt_ret = (tee_att_error_t)sgx_status;
+        goto CLEANUP;
+    }
+    if (TDQE_SUCCESS != tdqe_error) {
+        refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
+        goto CLEANUP;
+    }
+
+    if (resealed) {
+        refqt_ret = write_persistent_data((uint8_t*)m_ecdsa_blob,
+                                          tdqe_blob_size,
+                                          get_blob_label_for_algorithm(m_att_key_algorithm_id));
+        if (refqt_ret != TEE_ATT_SUCCESS) {
+            SE_TRACE(SE_TRACE_WARNING, "Unable to persist resealed trusted ML-DSA blob. Continuing with in-memory cache.\n");
+            refqt_ret = TEE_ATT_SUCCESS;
+        }
+    }
+
+    sgx_status = gen_quote(m_eid,
+                           (uint32_t*)&tdqe_error,
+                           (uint8_t*)m_ecdsa_blob,
+                           tdqe_blob_size,
+                           static_cast<uint32_t>(m_att_key_algorithm_id),
+                           p_app_report,
+                           NULL,
+                           NULL,
+                           NULL,
+                           p_quote,
+                           quote_size,
+                           NULL,
+                           0);
+    if (SGX_SUCCESS != sgx_status) {
+        refqt_ret = (tee_att_error_t)sgx_status;
+        goto CLEANUP;
+    }
+    if (TDQE_SUCCESS != tdqe_error) {
+        refqt_ret = (tee_att_error_t)tdqe_error;
+        goto CLEANUP;
+    }
+
+CLEANUP:
+    if (0 != blob_mutex_rc) {
+        int unlock_rc = se_mutex_unlock(&m_ecdsa_blob_mutex);
+        if (0 == unlock_rc) {
+            SE_TRACE(SE_TRACE_ERROR, "Failed to unlock mutex");
+            return TEE_ATT_ERROR_UNEXPECTED;
+        }
+    }
+
+    return refqt_ret;
 }
 
 

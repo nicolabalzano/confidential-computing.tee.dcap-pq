@@ -15,6 +15,12 @@
 #include "tdqe_u.h"
 #include "id_enclave_u.h"
 
+extern "C" void ocall_debug_message(const char *msg)
+{
+    fprintf(stderr, "[tdqe-debug] %s\n", msg ? msg : "(null)");
+    fflush(stderr);
+}
+
 #ifndef _MSC_VER
     #define TDQE_ENCLAVE_NAME "libsgx_tdqe.signed.so.1"
     #define ID_ENCLAVE_NAME "libsgx_id_enclave.signed.so.1"
@@ -55,6 +61,16 @@ static uint32_t get_tdqe_blob_size_for_algorithm(uint32_t algorithm_id)
     default:
         return SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK;
     }
+}
+
+static bool should_fallback_to_local_cert_data(tee_att_error_t ret)
+{
+    return ret == TEE_ATT_PLATFORM_LIB_UNAVAILABLE ||
+           ret == TEE_ATT_NO_PLATFORM_CERT_DATA ||
+           ret == TEE_ATT_NETWORK_ERROR ||
+           ret == (tee_att_error_t)SGX_QL_PLATFORM_LIB_UNAVAILABLE ||
+           ret == (tee_att_error_t)SGX_QL_NO_PLATFORM_CERT_DATA ||
+           ret == (tee_att_error_t)SGX_QL_NETWORK_ERROR;
 }
 
 struct tdqe_blob_plaintext_view_t {
@@ -1204,6 +1220,12 @@ tee_att_error_t tee_att_config_t::trusted_tdx_only_init_quote(sgx_ql_cert_key_ty
         return refqt_ret;
     }
 
+    if (is_fresh_loaded && m_raw_pce_isvsvn == 0xFFFF) {
+        // Trusted TDX-only bootstrap does not obtain raw PCE info from the legacy PCE path.
+        // Keep the context and the persisted blob aligned on a stable sentinel value.
+        m_raw_pce_isvsvn = 0;
+    }
+
     memset(p_qe_target_info, 0, sizeof(*p_qe_target_info));
     if (0 != memcpy_s(&p_qe_target_info->attributes,
                       sizeof(p_qe_target_info->attributes),
@@ -1252,8 +1274,10 @@ tee_att_error_t tee_att_config_t::trusted_tdx_only_init_quote(sgx_ql_cert_key_ty
                                          &blob_size_read,
                                          get_blob_label_for_algorithm(m_att_key_algorithm_id));
         if (TEE_ATT_SUCCESS != refqt_ret) {
-            SE_TRACE(SE_TRACE_WARNING, "ML-DSA blob does not exist in persistent storage. Falling back to in-memory cache.\n");
+            SE_TRACE(SE_TRACE_WARNING, "ML-DSA blob does not exist in persistent storage. Generating a new trusted local key.\n");
             refqt_ret = TEE_ATT_SUCCESS;
+            gen_new_key = true;
+            break;
         } else if (blob_size_read != tdqe_blob_size) {
             SE_TRACE(SE_TRACE_WARNING, "Invalid ML-DSA blob size on disk. Regenerating local trusted key.\n");
             gen_new_key = true;
@@ -1411,6 +1435,10 @@ tee_att_error_t tee_att_config_t::trusted_tdx_only_init_quote(sgx_ql_cert_key_ty
         }
         plaintext_data_mldsa.signature_scheme = PCE_NIST_P256_ECDSA_SHA256;
         plaintext_data_mldsa.certification_key_type = certification_key_type;
+        plaintext_data_mldsa.cert_pce_info.pce_isv_svn = m_raw_pce_isvsvn;
+        plaintext_data_mldsa.cert_pce_info.pce_id = m_pce_info.pce_id;
+        plaintext_data_mldsa.raw_pce_info.pce_isv_svn = m_raw_pce_isvsvn;
+        plaintext_data_mldsa.raw_pce_info.pce_id = m_pce_info.pce_id;
 
         sgx_status = store_cert_data(m_eid,
                                      (uint32_t*)&tdqe_error,
@@ -2272,6 +2300,9 @@ tee_att_error_t tee_att_config_t::get_quote_size(sgx_ql_cert_key_type_t certific
 tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t certification_key_type,
                                                    uint32_t* p_quote_size)
 {
+    fprintf(stderr, "[tdx-quote-debug] ecdsa_get_quote_size: enter alg=%u cert_type=%u\n",
+            m_att_key_algorithm_id,
+            certification_key_type);
 
     tee_att_error_t refqt_ret = TEE_ATT_SUCCESS;
     sgx_status_t sgx_status = SGX_SUCCESS;
@@ -2300,6 +2331,7 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
     // Load the TDQE
     SE_TRACE(SE_TRACE_NOTICE, "Call Load the QE.\n");
     refqt_ret = load_qe();
+    fprintf(stderr, "[tdx-quote-debug] mldsa_get_quote_size: load_qe ret=0x%x\n", refqt_ret);
     if (TEE_ATT_SUCCESS != refqt_ret) {
         goto CLEANUP;
     }
@@ -2463,6 +2495,18 @@ tee_att_error_t tee_att_config_t::ecdsa_get_quote_size(sgx_ql_cert_key_type_t ce
 tee_att_error_t tee_att_config_t::mldsa_get_quote_size(sgx_ql_cert_key_type_t certification_key_type,
                                                        uint32_t* p_quote_size)
 {
+    fprintf(stderr, "[tdx-quote-debug] mldsa_get_quote_size: enter alg=%u cert_type=%u\n",
+            m_att_key_algorithm_id,
+            certification_key_type);
+    tee_att_error_t refqt_ret = TEE_ATT_SUCCESS;
+    uint32_t cert_data_size = 0;
+    uint32_t blob_size_read = 0;
+    sgx_psvn_t pce_cert_psvn;
+    sgx_ql_pck_cert_id_t pck_cert_id;
+    tdqe_blob_plaintext_view_t blob_view;
+    int blob_mutex_rc = 0;
+    const uint32_t tdqe_blob_size = get_tdqe_blob_size_for_algorithm(m_att_key_algorithm_id);
+
     if (PPID_RSA3072_ENCRYPTED != certification_key_type) {
         return TEE_ATT_ERROR_INVALID_PARAMETER;
     }
@@ -2472,19 +2516,162 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote_size(sgx_ql_cert_key_type_t ce
         return(TEE_ATT_ERROR_INVALID_PARAMETER);
     }
 
-    *p_quote_size = sizeof(sgx_quote5_t) +                // quote body
-                    sizeof(sgx_report2_body_v1_5_ex_t) +     // copy from TD Report for TDX 1.5 type 4
-                    sizeof(uint32_t) +                    // Field for Auth Data size
-                    sizeof(sgx_mldsa_65_sig_data_v4_t) +  // signature
-                    sizeof(sgx_ql_certification_data_t) + // cert_key_type == ECDSA_SIG_AUX_DATA
-                    sizeof(sgx_qe_report_certification_data_t) +
-                    sizeof(sgx_ql_auth_data_t) +
-                    REF_ECDSDA_AUTHENTICATION_DATA_SIZE +  // Authentication data
-                    sizeof(sgx_ql_certification_data_t) + // cert_key_type == PPID_RSA3072_ENCRYPTED
-                    sizeof(sgx_ql_ppid_rsa3072_encrypted_cert_info_t);
-    SE_PROD_LOG("[tdx-quote-debug] mldsa_get_quote_size: quote_size=%u (default certification data path only).\n",
-                *p_quote_size);
-    return TEE_ATT_SUCCESS;
+    if (uses_legacy_pce_bootstrap()) {
+        *p_quote_size = sizeof(sgx_quote5_t) +
+                        sizeof(sgx_report2_body_v1_5_ex_t) +
+                        sizeof(uint32_t) +
+                        sizeof(sgx_mldsa_65_sig_data_v4_t) +
+                        sizeof(sgx_ql_certification_data_t) +
+                        sizeof(sgx_qe_report_certification_data_t) +
+                        sizeof(sgx_ql_auth_data_t) +
+                        REF_ECDSDA_AUTHENTICATION_DATA_SIZE +
+                        sizeof(sgx_ql_certification_data_t) +
+                        sizeof(sgx_ql_ppid_rsa3072_encrypted_cert_info_t);
+        return TEE_ATT_SUCCESS;
+    }
+
+    refqt_ret = load_qe();
+    if (TEE_ATT_SUCCESS != refqt_ret) {
+        goto CLEANUP;
+    }
+
+    blob_mutex_rc = se_mutex_lock(&m_ecdsa_blob_mutex);
+    if (0 == blob_mutex_rc) {
+        SE_TRACE(SE_TRACE_ERROR, "Failed to lock mutex\n");
+        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+        goto CLEANUP;
+    }
+
+    blob_size_read = tdqe_blob_size;
+    refqt_ret = read_persistent_data((uint8_t*)m_ecdsa_blob,
+                                     &blob_size_read,
+                                     get_blob_label_for_algorithm(m_att_key_algorithm_id));
+    fprintf(stderr, "[tdx-quote-debug] mldsa_get_quote_size: read_persistent_data ret=0x%x blob_size_read=%u expected=%u\n",
+            refqt_ret,
+            blob_size_read,
+            tdqe_blob_size);
+    if (TEE_ATT_SUCCESS != refqt_ret) {
+        refqt_ret = TEE_ATT_SUCCESS;
+    } else if (blob_size_read != tdqe_blob_size) {
+        refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
+        goto CLEANUP;
+    }
+
+    if (!get_tdqe_blob_plaintext_view(m_ecdsa_blob, tdqe_blob_size, &blob_view)) {
+        fprintf(stderr, "[tdx-quote-debug] mldsa_get_quote_size: get_tdqe_blob_plaintext_view failed\n");
+        SE_TRACE(SE_TRACE_ERROR, "Unsupported TDQE blob format.\n");
+        refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
+        goto CLEANUP;
+    }
+    fprintf(stderr, "[tdx-quote-debug] mldsa_get_quote_size: blob view ok raw_pce_isvsvn=%u blob_raw_pce_isvsvn=%u\n",
+            m_raw_pce_isvsvn,
+            blob_view.raw_pce_info->pce_isv_svn);
+
+    if (m_raw_pce_isvsvn != blob_view.raw_pce_info->pce_isv_svn) {
+        SE_TRACE(SE_TRACE_ERROR, "PCE's raw isvsvn changed\n");
+        refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
+        goto CLEANUP;
+    }
+
+    pck_cert_id.p_qe3_id = (uint8_t*)blob_view.qe_id;
+    pck_cert_id.qe3_id_size = sizeof(*blob_view.qe_id);
+    pck_cert_id.p_platform_cpu_svn = const_cast<sgx_cpu_svn_t*>(blob_view.raw_cpu_svn);
+    pck_cert_id.p_platform_pce_isv_svn = const_cast<sgx_isv_svn_t*>(&blob_view.raw_pce_info->pce_isv_svn);
+    pck_cert_id.p_encrypted_ppid = NULL;
+    pck_cert_id.encrypted_ppid_size = 0;
+    pck_cert_id.crypto_suite = PCE_ALG_RSA_OAEP_3072;
+    pck_cert_id.pce_id = blob_view.cert_pce_info->pce_id;
+    refqt_ret = get_platform_quote_cert_data(&pck_cert_id,
+                                             &pce_cert_psvn.cpu_svn,
+                                             &pce_cert_psvn.isv_svn,
+                                             &cert_data_size,
+                                             NULL);
+    fprintf(stderr, "[tdx-quote-debug] mldsa_get_quote_size: get_platform_quote_cert_data ret=0x%x cert_data_size=%u\n",
+            refqt_ret,
+            cert_data_size);
+    if (refqt_ret != TEE_ATT_SUCCESS) {
+        if (!should_fallback_to_local_cert_data(refqt_ret)) {
+            goto CLEANUP;
+        }
+
+        *p_quote_size = sizeof(sgx_quote5_t) +
+                        sizeof(sgx_report2_body_v1_5_ex_t) +
+                        sizeof(uint32_t) +
+                        sizeof(sgx_mldsa_65_sig_data_v4_t) +
+                        sizeof(sgx_ql_certification_data_t) +
+                        sizeof(sgx_qe_report_certification_data_t) +
+                        sizeof(sgx_ql_auth_data_t) +
+                        REF_ECDSDA_AUTHENTICATION_DATA_SIZE +
+                        sizeof(sgx_ql_certification_data_t) +
+                        sizeof(sgx_ql_ppid_rsa3072_encrypted_cert_info_t);
+        refqt_ret = TEE_ATT_SUCCESS;
+        SE_PROD_LOG("[tdx-quote-debug] mldsa_get_quote_size: quote_size=%u (default certification data path).\n",
+                    *p_quote_size);
+    } else {
+        if ((cert_data_size > MAX_CERT_DATA_SIZE) || (cert_data_size < MIN_CERT_DATA_SIZE)) {
+            fprintf(stderr, "[tdx-quote-debug] mldsa_get_quote_size: invalid cert_data_size=%u (min=%u max=%u)\n",
+                    cert_data_size,
+                    MIN_CERT_DATA_SIZE,
+                    MAX_CERT_DATA_SIZE);
+            *p_quote_size = sizeof(sgx_quote5_t) +
+                            sizeof(sgx_report2_body_v1_5_ex_t) +
+                            sizeof(uint32_t) +
+                            sizeof(sgx_mldsa_65_sig_data_v4_t) +
+                            sizeof(sgx_ql_certification_data_t) +
+                            sizeof(sgx_qe_report_certification_data_t) +
+                            sizeof(sgx_ql_auth_data_t) +
+                            REF_ECDSDA_AUTHENTICATION_DATA_SIZE +
+                            sizeof(sgx_ql_certification_data_t) +
+                            sizeof(sgx_ql_ppid_rsa3072_encrypted_cert_info_t);
+            refqt_ret = TEE_ATT_SUCCESS;
+            goto CLEANUP;
+        }
+        if ((0 != memcmp(blob_view.cert_cpu_svn, &pce_cert_psvn.cpu_svn, sizeof(*blob_view.cert_cpu_svn))) ||
+            (blob_view.cert_pce_info->pce_isv_svn != pce_cert_psvn.isv_svn)) {
+            SE_TRACE(SE_TRACE_ERROR, "TCBm in ML-DSA blob doesn't match the value returned by the platform lib. %d and %d\n",
+                     blob_view.cert_pce_info->pce_isv_svn, pce_cert_psvn.isv_svn);
+            *p_quote_size = sizeof(sgx_quote5_t) +
+                            sizeof(sgx_report2_body_v1_5_ex_t) +
+                            sizeof(uint32_t) +
+                            sizeof(sgx_mldsa_65_sig_data_v4_t) +
+                            sizeof(sgx_ql_certification_data_t) +
+                            sizeof(sgx_qe_report_certification_data_t) +
+                            sizeof(sgx_ql_auth_data_t) +
+                            REF_ECDSDA_AUTHENTICATION_DATA_SIZE +
+                            sizeof(sgx_ql_certification_data_t) +
+                            sizeof(sgx_ql_ppid_rsa3072_encrypted_cert_info_t);
+            refqt_ret = TEE_ATT_SUCCESS;
+            goto CLEANUP;
+        }
+        *p_quote_size = (uint32_t)(sizeof(sgx_quote5_t) +
+                                   sizeof(sgx_report2_body_v1_5_ex_t) +
+                                   sizeof(uint32_t) +
+                                   sizeof(sgx_mldsa_65_sig_data_v4_t) +
+                                   sizeof(sgx_ql_certification_data_t) +
+                                   sizeof(sgx_qe_report_certification_data_t) +
+                                   sizeof(sgx_ql_auth_data_t) +
+                                   REF_ECDSDA_AUTHENTICATION_DATA_SIZE +
+                                   sizeof(sgx_ql_certification_data_t) +
+                                   cert_data_size);
+        SE_PROD_LOG("[tdx-quote-debug] mldsa_get_quote_size: quote_size=%u (platform cert path, cert_data_size=%u).\n",
+                    *p_quote_size,
+                    cert_data_size);
+    }
+
+CLEANUP:
+    if (0 != blob_mutex_rc) {
+        blob_mutex_rc = se_mutex_unlock(&m_ecdsa_blob_mutex);
+        if (0 == blob_mutex_rc) {
+            SE_TRACE(SE_TRACE_ERROR, "Failed to unlock mutex");
+            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+        }
+    }
+
+    fprintf(stderr, "[tdx-quote-debug] mldsa_get_quote_size: returning ret=0x%x quote_size=%u\n",
+            refqt_ret,
+            (p_quote_size != NULL) ? *p_quote_size : 0);
+
+    return refqt_ret;
 }
 
 /**
@@ -2805,6 +2992,11 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote(const sgx_report2_t *p_app_rep
     uint8_t resealed = 0;
     uint32_t blob_size_read = 0;
     int blob_mutex_rc = 0;
+    uint32_t cert_data_size = 0;
+    sgx_ql_pck_cert_id_t pck_cert_id;
+    tdqe_blob_plaintext_view_t blob_view;
+    sgx_ql_certification_data_t *p_certification_data = NULL;
+    sgx_psvn_t pce_cert_psvn;
     const uint32_t tdqe_blob_size = get_tdqe_blob_size_for_algorithm(m_att_key_algorithm_id);
 
     if (uses_legacy_pce_bootstrap()) {
@@ -2815,7 +3007,6 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote(const sgx_report2_t *p_app_rep
         SE_TRACE(SE_TRACE_ERROR, "Invalid input pointer.\n");
         return TEE_ATT_ERROR_INVALID_PARAMETER;
     }
-
     refqt_ret = load_qe();
     if (TEE_ATT_SUCCESS != refqt_ret) {
         goto CLEANUP;
@@ -2839,7 +3030,6 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote(const sgx_report2_t *p_app_rep
         refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
         goto CLEANUP;
     }
-
     sgx_status = verify_blob(m_eid,
                              (uint32_t*)&tdqe_error,
                              (uint8_t*)m_ecdsa_blob,
@@ -2856,7 +3046,6 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote(const sgx_report2_t *p_app_rep
         refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
         goto CLEANUP;
     }
-
     if (resealed) {
         refqt_ret = write_persistent_data((uint8_t*)m_ecdsa_blob,
                                           tdqe_blob_size,
@@ -2866,6 +3055,93 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote(const sgx_report2_t *p_app_rep
             refqt_ret = TEE_ATT_SUCCESS;
         }
     }
+
+    if (!get_tdqe_blob_plaintext_view(m_ecdsa_blob, tdqe_blob_size, &blob_view)) {
+        SE_TRACE(SE_TRACE_ERROR, "Unsupported TDQE blob format.\n");
+        refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
+        goto CLEANUP;
+    }
+
+    if (m_raw_pce_isvsvn != blob_view.raw_pce_info->pce_isv_svn) {
+        SE_TRACE(SE_TRACE_ERROR, "PCE's raw isvsvn changed\n");
+        refqt_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
+        goto CLEANUP;
+    }
+
+    pck_cert_id.p_qe3_id = (uint8_t*)blob_view.qe_id;
+    pck_cert_id.qe3_id_size = sizeof(*blob_view.qe_id);
+    pck_cert_id.p_platform_cpu_svn = const_cast<sgx_cpu_svn_t*>(blob_view.raw_cpu_svn);
+    pck_cert_id.p_platform_pce_isv_svn = const_cast<sgx_isv_svn_t*>(&blob_view.raw_pce_info->pce_isv_svn);
+    pck_cert_id.p_encrypted_ppid = NULL;
+    pck_cert_id.encrypted_ppid_size = 0;
+    pck_cert_id.crypto_suite = PCE_ALG_RSA_OAEP_3072;
+    pck_cert_id.pce_id = blob_view.cert_pce_info->pce_id;
+    refqt_ret = get_platform_quote_cert_data(&pck_cert_id,
+                                             &pce_cert_psvn.cpu_svn,
+                                             &pce_cert_psvn.isv_svn,
+                                             &cert_data_size,
+                                             NULL);
+    fprintf(stderr, "[tdx-quote-debug] mldsa_get_quote: get_platform_quote_cert_data ret=0x%x cert_data_size=%u\n",
+            refqt_ret,
+            cert_data_size);
+    if (refqt_ret == TEE_ATT_SUCCESS) {
+        if ((cert_data_size > MAX_CERT_DATA_SIZE) || (cert_data_size < MIN_CERT_DATA_SIZE)) {
+            fprintf(stderr, "[tdx-quote-debug] mldsa_get_quote: invalid cert_data_size=%u (min=%u max=%u)\n",
+                    cert_data_size,
+                    MIN_CERT_DATA_SIZE,
+                    MAX_CERT_DATA_SIZE);
+            refqt_ret = TEE_ATT_SUCCESS;
+            cert_data_size = 0;
+            goto SKIP_PLATFORM_CERT_DATA;
+        }
+        p_certification_data = (sgx_ql_certification_data_t *)malloc(sizeof(*p_certification_data) + cert_data_size);
+        if (NULL == p_certification_data) {
+            refqt_ret = TEE_ATT_ERROR_OUT_OF_MEMORY;
+            goto CLEANUP;
+        }
+        memset(p_certification_data, 0, sizeof(*p_certification_data));
+        refqt_ret = get_platform_quote_cert_data(&pck_cert_id,
+                                                 &pce_cert_psvn.cpu_svn,
+                                                 &pce_cert_psvn.isv_svn,
+                                                 &cert_data_size,
+                                                 p_certification_data->certification_data);
+        if (refqt_ret != TEE_ATT_SUCCESS) {
+            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+            goto CLEANUP;
+        }
+        if ((0 != memcmp(blob_view.cert_cpu_svn, &pce_cert_psvn.cpu_svn, sizeof(*blob_view.cert_cpu_svn))) ||
+            (blob_view.cert_pce_info->pce_isv_svn != pce_cert_psvn.isv_svn)) {
+            SE_TRACE(SE_TRACE_ERROR, "TCBm in ML-DSA blob doesn't match the value returned by the platform lib. %d and %d\n",
+                     blob_view.cert_pce_info->pce_isv_svn, pce_cert_psvn.isv_svn);
+            free(p_certification_data);
+            p_certification_data = NULL;
+            refqt_ret = TEE_ATT_SUCCESS;
+            cert_data_size = 0;
+            goto SKIP_PLATFORM_CERT_DATA;
+        }
+        if (quote_size < (sizeof(sgx_quote5_t) +
+                          sizeof(sgx_report2_body_v1_5_ex_t) +
+                          sizeof(uint32_t) +
+                          sizeof(sgx_mldsa_65_sig_data_v4_t) +
+                          sizeof(sgx_ql_certification_data_t) +
+                          sizeof(sgx_ql_certification_data_t) +
+                          sizeof(sgx_qe_report_certification_data_t) +
+                          sizeof(sgx_ql_auth_data_t) +
+                          REF_ECDSDA_AUTHENTICATION_DATA_SIZE +
+                          cert_data_size)) {
+            refqt_ret = TEE_ATT_ERROR_INVALID_PARAMETER;
+            goto CLEANUP;
+        }
+        p_certification_data->cert_key_type = PCK_CERT_CHAIN;
+        p_certification_data->size = cert_data_size;
+    } else {
+        if (!should_fallback_to_local_cert_data(refqt_ret)) {
+            goto CLEANUP;
+        }
+        refqt_ret = TEE_ATT_SUCCESS;
+    }
+
+SKIP_PLATFORM_CERT_DATA:
 
     sgx_status = gen_quote(m_eid,
                            (uint32_t*)&tdqe_error,
@@ -2878,8 +3154,8 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote(const sgx_report2_t *p_app_rep
                            NULL,
                            p_quote,
                            quote_size,
-                           NULL,
-                           0);
+                           (uint8_t*)p_certification_data,
+                           p_certification_data ? (uint32_t)(sizeof(*p_certification_data) + cert_data_size) : 0);
     if (SGX_SUCCESS != sgx_status) {
         refqt_ret = (tee_att_error_t)sgx_status;
         goto CLEANUP;
@@ -2890,6 +3166,9 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote(const sgx_report2_t *p_app_rep
     }
 
 CLEANUP:
+    if (NULL != p_certification_data) {
+        free(p_certification_data);
+    }
     if (0 != blob_mutex_rc) {
         int unlock_rc = se_mutex_unlock(&m_ecdsa_blob_mutex);
         if (0 == unlock_rc) {

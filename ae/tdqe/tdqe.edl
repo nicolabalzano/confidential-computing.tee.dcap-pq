@@ -79,4 +79,8 @@ trusted {
                               [in, size = cert_data_size] const uint8_t * p_cert_data,
                               uint32_t cert_data_size);
     };
+
+untrusted {
+    void ocall_debug_message([in, string] const char *msg);
+    };
 };

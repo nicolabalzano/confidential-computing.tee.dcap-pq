@@ -31,12 +31,15 @@
 
 
 TOP_DIR := ../../../QuoteGeneration
+ifeq ($(SGX_MODE), HW)
 MITIGATION-CVE-2020-0551 := LOAD
+endif
 include $(TOP_DIR)/../ae/dep/buildenv.mk
 
 AENAME := id_enclave
 SONAME := $(AENAME).so
 SIGNED_IDE_NAME := libsgx_$(AENAME)$(if $(FIPS),-fips).signed.so
+SIGNED_IDE_MAJOR := $(SIGNED_IDE_NAME).$(call get_major_version,IDE_VERSION)
 IDE_CONFIG_FILE := config$(if $(FIPS),.fips).xml
 IDE_KEY_FILE := ../../dep/dcap_ae_test_key.pem
 
@@ -71,6 +74,7 @@ $(SONAME): $(OBJS)
 
 $(SIGNED_IDE_NAME): $(SONAME) $(IDE_CONFIG_FILE) $(IDE_KEY_FILE)
 	@$(SGX_ENCLAVE_SIGNER) sign -key $(IDE_KEY_FILE) -enclave $< -out $@ -config $(IDE_CONFIG_FILE)
+	@$(LN) $(SIGNED_IDE_NAME) $(SIGNED_IDE_MAJOR)
 
 
 $(AENAME).o: $(AENAME)_t.c
@@ -88,6 +92,7 @@ clean:
 	@$(RM) *.map
 	@$(RM) *_t.*
 	@$(RM) *.signed.so
+	@$(RM) *.signed.so.*
 
 .PHONY: rebuild
 rebuild:

@@ -652,6 +652,7 @@ quote3_error_t tee_qv_get_collateral(
     uint8_t **pp_quote_collateral,
     uint32_t *p_collateral_size)
 {
+    fprintf(stderr, "[qv-debug] tee_qv_get_collateral: enter quote_size=%u\n", quote_size);
     quote3_error_t ret = SGX_QL_SUCCESS;
     unsigned char fmspc_from_quote[FMSPC_SIZE] = {0};
     unsigned char ca_from_quote[CA_SIZE] = {0};
@@ -672,6 +673,7 @@ quote3_error_t tee_qv_get_collateral(
         FMSPC_SIZE,
         ca_from_quote,
         CA_SIZE);
+    fprintf(stderr, "[qv-debug] tee_qv_get_collateral: qvl_get_fmspc_ca_from_quote ret=0x%x\n", ret);
     if (ret != SGX_QL_SUCCESS)
     {
         return ret;

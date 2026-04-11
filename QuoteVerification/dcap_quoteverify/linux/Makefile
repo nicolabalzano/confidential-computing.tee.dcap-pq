@@ -15,8 +15,12 @@ endif
 INSTALL_PATH 		?= /usr/lib/x86_64-linux-gnu
 QVE_SRC_PATH		:= ../../../ae/QvE
 DCAP_QPL_DIR := $(DCAP_QG_DIR)/qpl
+DCAP_AE_DIR := $(DCAP_QG_DIR)/../ae
 
-QVL_LIB_INC		+= -I$(PREBUILD_OPENSSL_PATH)/inc -I$(QVE_SRC_PATH)/Include
+QVL_LIB_INC		+= -I$(PREBUILD_OPENSSL_PATH)/inc -I$(QVE_SRC_PATH)/Include \
+                   -I$(DCAP_AE_DIR)/tdqe \
+                   -I$(DCAP_AE_DIR)/pq/mldsa-native/mldsa \
+                   -I$(DCAP_AE_DIR)/pq/mldsa-native/mldsa/src
 QVL_PARSER_INC  += -I$(PREBUILD_OPENSSL_PATH)/inc
 QVL_VERIFY_INC	:= -I$(QVE_SRC_PATH)/Include \
                    -I../inc \
@@ -25,6 +29,9 @@ QVL_VERIFY_INC	:= -I$(QVE_SRC_PATH)/Include \
                    -I$(DCAP_QG_DIR)/common/inc/internal \
                    -I$(DCAP_QG_DIR)/common/inc/internal/linux \
                    -I$(DCAP_QG_DIR)/pce_wrapper/inc \
+                   -I$(DCAP_AE_DIR)/tdqe \
+                   -I$(DCAP_AE_DIR)/pq/mldsa-native/mldsa \
+                   -I$(DCAP_AE_DIR)/pq/mldsa-native/mldsa/src \
                    -I$(PREBUILD_OPENSSL_PATH)/inc \
                    $(QVL_LIB_INC) \
                    -I$(DCAP_QPL_DIR)/inc \
@@ -55,6 +62,8 @@ LDUFLAGS	+= -Wl,--version-script=sgx_dcap_quoteverify.lds -Wl,--gc-sections
 QVL_VERIFY_CPP_SRCS := $(wildcard ../*.cpp) $(wildcard *.cpp)
 QVL_VERIFY_C_SRCS := $(COMMON_DIR)/src/se_trace.c $(COMMON_DIR)/src/se_thread.c
 QVL_VERIFY_C_SRCS += qve_u.c
+QVL_VERIFY_C_SRCS += $(DCAP_AE_DIR)/tdqe/tdqe_mldsa_adapter.c
+QVL_VERIFY_C_SRCS += $(DCAP_AE_DIR)/pq/mldsa-native/mldsa/mldsa_native.c
 
 QVL_VERIFY_CPP_OBJS := $(QVL_VERIFY_CPP_SRCS:.cpp=.o)
 QVL_VERIFY_CPP_OBJS_STATIC := $(QVL_VERIFY_CPP_SRCS:.cpp=_s.o)

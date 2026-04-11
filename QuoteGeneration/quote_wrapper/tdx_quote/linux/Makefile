@@ -32,9 +32,15 @@ Quote_Include_Paths := -I$(SGX_SDK)/include -I../inc -I../../common/inc -I./ \
 Quote_C_Flags := $(CFLAGS) -g -MMD -fPIC -Werror -Wno-attributes $(Quote_Include_Paths)
 
 Quote_Cpp_Flags := $(CXXFLAGS) -g -MMD -fPIC -Werror -Wno-attributes $(Quote_Include_Paths)
+ifneq ($(SGX_MODE), HW)
+Quote_Urts_Libs := -lsgx_urts_sim -lsgx_uae_service_sim
+else
+Quote_Urts_Libs := -lsgx_urts -lsgx_uae_service
+endif
+
 Quote_Link_Flags := $(COMMON_LDFLAGS) -g -L$(ROOT_DIR)/build/linux \
                     -L$(PCE_Library_Dir) -lsgx_pce_logic -L$(SGX_SDK)/lib64 \
-					-lsgx_urts -lpthread -ldl
+					$(Quote_Urts_Libs) -lpthread -ldl
 
 Quote_Link_Flags += -Wl,--version-script=td_ql_logic.lds -Wl,--gc-sections
 
@@ -92,7 +98,7 @@ test_app: $(Quote_Name) ../../../../../tdx_tests/direct/test_tdx_quote_wrapper.c
 	$(CXX) $(Quote_Cpp_Flags) -I../.. -I../../tdx_attest -I../../common/inc -I../../../../../tdx_tests/common \
 		../../../../../tdx_tests/direct/test_tdx_quote_wrapper.cpp ../../../../../tdx_tests/common/utils.cpp -L. -lsgx_tdx_logic -L../../../pce_wrapper/linux -lsgx_pce_logic -L../../tdx_attest/linux -ltdx_attest \
 		-L$(SGX_SDK)/lib64 \
-		-lsgx_urts -lpthread -ldl -o $@
+		$(Quote_Urts_Libs) -lpthread -ldl -o $@
 	@echo "LINK =>  $@"
 
 $(TDQE_Signed_Name): force_look

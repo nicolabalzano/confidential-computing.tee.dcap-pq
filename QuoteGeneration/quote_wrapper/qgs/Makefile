@@ -27,8 +27,13 @@ endif
 DEPENDS = ${QGS_OBJS test_client.o:.o=.d}
 
 # SGX related libraries
+ifneq ($(SGX_MODE), HW)
+QGS_URTS_LIBS = -lsgx_urts_sim -lsgx_uae_service_sim
+else
+QGS_URTS_LIBS = -lsgx_urts -lsgx_uae_service
+endif
 QGS_LFLAGS = -L$(TOP_DIR)/build/linux -lsgx_tdx_logic -lsgx_pce_logic -ldl \
-             -L$(SGX_SDK)/lib64 -lsgx_urts -g
+             -L$(SGX_SDK)/lib64 $(QGS_URTS_LIBS) -g
 # add boost_system for link
 QGS_LFLAGS += -lboost_system -lboost_thread -lpthread
 # add qgs_msg_lib for link

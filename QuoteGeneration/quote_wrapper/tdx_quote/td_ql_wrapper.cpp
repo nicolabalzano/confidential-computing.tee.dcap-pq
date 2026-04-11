@@ -41,6 +41,12 @@
 #include "quoting_enclave_tdqe.h"
 
 #ifndef _MSC_VER
+    #define TDQE_ID_ENCLAVE_FILE_NAME "libsgx_id_enclave.signed.so.1"
+#else
+    #define TDQE_ID_ENCLAVE_FILE_NAME _T("id_enclave.signed.dll")
+#endif
+
+#ifndef _MSC_VER
     extern errno_t memcpy_s(void *dest, size_t numberOfElements, const void *src, size_t count);
 #endif
 #define MAX_PATH 260
@@ -183,10 +189,65 @@ tee_att_error_t tee_att_create_context(const tee_att_att_key_id_t* p_att_key_id,
         }
 #ifndef _MSC_VER
         strncpy(p_context->tdqe_path, p_qe_path, MAX_PATH - 1);
+        strncpy(p_context->ide_path, p_qe_path, MAX_PATH - 1);
 #else
         MultiByteToWideChar(CP_ACP, 0, p_qe_path, (int)len, p_context->tdqe_path, MAX_PATH);
+        MultiByteToWideChar(CP_ACP, 0, p_qe_path, (int)len, p_context->ide_path, MAX_PATH);
 #endif
         p_context->tdqe_path[len] = '\0';
+        p_context->ide_path[len] = '\0';
+
+#ifndef _MSC_VER
+        char* ide_last_slash = strrchr(p_context->ide_path, '/');
+        if (ide_last_slash != NULL) {
+            *ide_last_slash = '\0';
+            char* ide_linux_dir = strrchr(p_context->ide_path, '/');
+            if (ide_linux_dir != NULL) {
+                *ide_linux_dir = '\0';
+                char* ide_component = strrchr(p_context->ide_path, '/');
+                if (ide_component != NULL) {
+                    ++ide_component;
+                    strncpy(ide_component, "id_enclave", MAX_PATH - static_cast<size_t>(ide_component - p_context->ide_path) - 1);
+                    p_context->ide_path[MAX_PATH - 1] = '\0';
+                    size_t ide_path_len = strnlen(p_context->ide_path, MAX_PATH);
+                    size_t remaining = MAX_PATH - ide_path_len;
+                    if (remaining > 1) {
+                        strncat(p_context->ide_path, "/linux/", remaining - 1);
+                        ide_path_len = strnlen(p_context->ide_path, MAX_PATH);
+                        remaining = MAX_PATH - ide_path_len;
+                        if (remaining > 1) {
+                            strncat(p_context->ide_path, TDQE_ID_ENCLAVE_FILE_NAME, remaining - 1);
+                        }
+                    }
+                }
+            }
+        }
+#else
+        wchar_t* ide_last_slash = wcsrchr(p_context->ide_path, L'\\');
+        if (ide_last_slash == NULL) {
+            ide_last_slash = wcsrchr(p_context->ide_path, L'/');
+        }
+        if (ide_last_slash != NULL) {
+            *ide_last_slash = L'\0';
+            wchar_t* ide_linux_dir = wcsrchr(p_context->ide_path, L'\\');
+            if (ide_linux_dir == NULL) {
+                ide_linux_dir = wcsrchr(p_context->ide_path, L'/');
+            }
+            if (ide_linux_dir != NULL) {
+                *ide_linux_dir = L'\0';
+                wchar_t* ide_component = wcsrchr(p_context->ide_path, L'\\');
+                if (ide_component == NULL) {
+                    ide_component = wcsrchr(p_context->ide_path, L'/');
+                }
+                if (ide_component != NULL) {
+                    ++ide_component;
+                    wcsncpy_s(ide_component, MAX_PATH - static_cast<size_t>(ide_component - p_context->ide_path), L"id_enclave", _TRUNCATE);
+                    wcscat_s(p_context->ide_path, MAX_PATH, L"/linux/");
+                    wcscat_s(p_context->ide_path, MAX_PATH, TDQE_ID_ENCLAVE_FILE_NAME);
+                }
+            }
+        }
+#endif
     }
     *pp_context = p_context;
     return TEE_ATT_SUCCESS;

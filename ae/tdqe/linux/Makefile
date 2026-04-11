@@ -10,6 +10,7 @@ include $(TOP_DIR)/../ae/dep/buildenv.mk
 AENAME := tdqe
 SONAME := $(AENAME).so
 SIGNED_TDQE_NAME := libsgx_$(AENAME)$(if $(FIPS),-fips).signed.so
+SIGNED_TDQE_MAJOR := $(SIGNED_TDQE_NAME).$(call get_major_version,TDQE_VERSION)
 TDQE_CONFIG_FILE := config$(if $(FIPS),.fips).xml
 TDQE_KEY_FILE := ../../dep/dcap_ae_test_key.pem
 
@@ -27,6 +28,10 @@ INCLUDE := -I$(SGX_SDK)/include							\
            -I$(TOP_DIR)/../ae/pq/mldsa-native/mldsa/src	\
            -I..											\
            -I.
+
+ifneq ($(SGX_MODE), HW)
+DEFINES += -DSE_SIM
+endif
 
 EXTERNAL_LIB = $(EXTERNAL_LIB_NO_CRYPTO) -lsgx_tcxx -l$(TCRYPTO_LIB_NAME)
 
@@ -46,6 +51,7 @@ $(SONAME): $(OBJS)
 
 $(SIGNED_TDQE_NAME): $(SONAME) $(TDQE_CONFIG_FILE) $(TDQE_KEY_FILE)
 	@$(SGX_ENCLAVE_SIGNER) sign -key $(TDQE_KEY_FILE) -enclave $< -out $@ -config $(TDQE_CONFIG_FILE)
+	@$(LN) $(SIGNED_TDQE_NAME) $(SIGNED_TDQE_MAJOR)
 	@echo "SIGN =>  $@"
 
 quoting_enclave_tdqe.o: $(AENAME)_t.c
@@ -69,6 +75,7 @@ clean:
 	@$(RM) *.map
 	@$(RM) *_t.*
 	@$(RM) *.signed.so
+	@$(RM) *.signed.so.*
 
 .PHONY: rebuild
 rebuild:

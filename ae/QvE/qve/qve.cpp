@@ -453,6 +453,8 @@ static quote3_error_t extract_chain_from_quote(const uint8_t *p_quote,
     uint32_t* p_pck_cert_chain_size,
     uint8_t** pp_pck_cert_chain) {
 
+    fprintf(stderr, "[qv-debug] extract_chain_from_quote: enter quote_size=%u\n", quote_size);
+
     if (p_quote == NULL || quote_size < QUOTE_MIN_SIZE || p_pck_cert_chain_size == NULL || pp_pck_cert_chain == NULL || *pp_pck_cert_chain != NULL) {
         return SGX_QL_ERROR_INVALID_PARAMETER;
     }
@@ -463,10 +465,14 @@ static quote3_error_t extract_chain_from_quote(const uint8_t *p_quote,
     do {
         //get certification data size
         //
+        fprintf(stderr, "[qv-debug] extract_chain_from_quote: before sgxAttestationGetQECertificationDataSize\n");
         pck_res = sgxAttestationGetQECertificationDataSize(
             p_quote,
             quote_size,
             p_pck_cert_chain_size);
+        fprintf(stderr, "[qv-debug] extract_chain_from_quote: after sgxAttestationGetQECertificationDataSize status=%u size=%u\n",
+                static_cast<unsigned>(pck_res),
+                (p_pck_cert_chain_size != NULL) ? *p_pck_cert_chain_size : 0);
         if (pck_res != STATUS_OK) {
             ret = status_error_to_quote3_error(pck_res);
             break;
@@ -490,12 +496,16 @@ static quote3_error_t extract_chain_from_quote(const uint8_t *p_quote,
         //sgxAttestationGetQECertificationData expects p_pck_cert_chain_size to be exactly as returned
         //from sgxAttestationGetQECertificationDataSize
         //
+        fprintf(stderr, "[qv-debug] extract_chain_from_quote: before sgxAttestationGetQECertificationData\n");
         pck_res = sgxAttestationGetQECertificationData(
             p_quote,
             quote_size,
             *p_pck_cert_chain_size,
             *pp_pck_cert_chain,
             &p_pck_cert_chain_type);
+        fprintf(stderr, "[qv-debug] extract_chain_from_quote: after sgxAttestationGetQECertificationData status=%u type=%u\n",
+                static_cast<unsigned>(pck_res),
+                static_cast<unsigned>(p_pck_cert_chain_type));
         if (pck_res != STATUS_OK) {
             ret = status_error_to_quote3_error(pck_res);
             break;
@@ -541,6 +551,8 @@ quote3_error_t get_fmspc_ca_from_quote(const uint8_t* p_quote, uint32_t quote_si
     unsigned char* p_fmsp_from_quote, uint32_t fmsp_from_quote_size,
     unsigned char* p_ca_from_quote, uint32_t ca_from_quote_size) {
 
+    fprintf(stderr, "[qv-debug] get_fmspc_ca_from_quote: enter quote_size=%u\n", quote_size);
+
     if (SGXSSL_init())
         return SGX_QL_SERVICE_UNAVAILABLE;
 
@@ -560,7 +572,12 @@ quote3_error_t get_fmspc_ca_from_quote(const uint8_t* p_quote, uint32_t quote_si
     uint8_t* p_pck_cert_chain = NULL;
 
     do {
+        fprintf(stderr, "[qv-debug] get_fmspc_ca_from_quote: before extract_chain_from_quote\n");
         ret = extract_chain_from_quote(p_quote, quote_size, &pck_cert_chain_size, &p_pck_cert_chain);
+        fprintf(stderr, "[qv-debug] get_fmspc_ca_from_quote: after extract_chain_from_quote ret=0x%x chain_size=%u ptr=%p\n",
+                static_cast<unsigned>(ret),
+                pck_cert_chain_size,
+                p_pck_cert_chain);
         if (ret != SGX_QL_SUCCESS || p_pck_cert_chain == NULL || pck_cert_chain_size == 0) {
             break;
         }

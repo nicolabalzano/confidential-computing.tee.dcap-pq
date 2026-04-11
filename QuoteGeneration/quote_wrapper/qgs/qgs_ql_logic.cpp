@@ -42,6 +42,7 @@
 #include <boost/thread/tss.hpp>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <dlfcn.h>
 
 static const sgx_ql_att_key_id_t k_qgs_default_ecdsa_p256_att_key_id =
@@ -105,6 +106,15 @@ void cleanup(tee_att_config_t *p_ctx) {
 boost::thread_specific_ptr<tee_att_config_t> ptr(cleanup);
 
 namespace intel { namespace sgx { namespace dcap { namespace qgs {
+
+    static const char *get_qgs_tdqe_path()
+    {
+        const char *configured_path = std::getenv("QGS_TDQE_PATH");
+        if (configured_path != NULL && configured_path[0] != '\0') {
+            return configured_path;
+        }
+        return NULL;
+    }
 
     static bool is_tdx_uuid_equal(const tdx_uuid_t& lhs, const uint8_t *rhs)
     {
@@ -207,7 +217,7 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
         fprintf(stderr, "[qgs-debug] ensure_context about to create selected context algorithm_id=%u\n",
                 requested_key_id.base.algorithm_id);
         fflush(stderr);
-        ret = tee_att_create_context(&requested_key_id, NULL, &p_ctx);
+        ret = tee_att_create_context(&requested_key_id, get_qgs_tdqe_path(), &p_ctx);
         fprintf(stderr, "[qgs-debug] ensure_context create_context ret=0x%x ctx=%p\n", ret, (void*)p_ctx);
         fflush(stderr);
         if (ret != TEE_ATT_SUCCESS) {
@@ -253,7 +263,7 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
             QGS_LOG_INFO("call tee_att_create_context\n");
             fprintf(stderr, "[qgs-debug] about to call tee_att_create_context\n");
             fflush(stderr);
-            ret = tee_att_create_context(NULL, NULL, &p_ctx);
+            ret = tee_att_create_context(NULL, get_qgs_tdqe_path(), &p_ctx);
             fprintf(stderr, "[qgs-debug] tee_att_create_context ret=0x%x ctx=%p\n", ret, (void*)p_ctx);
             fflush(stderr);
             if (TEE_ATT_SUCCESS != ret) {
@@ -547,7 +557,7 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
             tee_att_error_t ret = TEE_ATT_SUCCESS;
             tee_att_config_t *p_ctx = NULL;
             QGS_LOG_INFO("call tee_att_create_context\n");
-            ret = tee_att_create_context(NULL, NULL, &p_ctx);
+            ret = tee_att_create_context(NULL, get_qgs_tdqe_path(), &p_ctx);
             if (TEE_ATT_SUCCESS != ret) {
                 QGS_LOG_ERROR("Cannot create context\n");
                 return {};

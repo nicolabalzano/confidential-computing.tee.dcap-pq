@@ -17,9 +17,15 @@ WORK_DIR := $(shell pwd)
 
 EXTERNAL_LIB_NO_CRYPTO = -lsgx_tstdc
 
+ifneq ($(SGX_MODE), HW)
+URTSLIB := -lsgx_urts_sim
+TRTSLIB := -lsgx_trts_sim
+EXTERNAL_LIB_NO_CRYPTO += -lsgx_tservice_sim
+else
 URTSLIB := -lsgx_urts
 TRTSLIB := -lsgx_trts
 EXTERNAL_LIB_NO_CRYPTO += -lsgx_tservice
+endif
 
 EXTERNAL_LIB   = $(EXTERNAL_LIB_NO_CRYPTO) -lsgx_tcrypto
 

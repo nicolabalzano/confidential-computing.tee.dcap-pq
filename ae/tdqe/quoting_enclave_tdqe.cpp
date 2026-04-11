@@ -75,6 +75,16 @@
 static const uint8_t g_vendor_id[16] =
 { 0x93,0x9A,0x72,0x33,0xF7,0x9C,0x4C,0xA9,0x94,0x0A,0x0D,0xB3,0x95,0x7F,0x06,0x07 };
 
+static volatile uint32_t g_tdqe_debug_stage = 0;
+
+static inline void set_tdqe_debug_stage(uint32_t stage, const char *msg)
+{
+    g_tdqe_debug_stage = stage;
+    if ((NULL != msg) && (NULL != strstr(msg, "SE_SIM bypass"))) {
+        ocall_debug_message(msg);
+    }
+}
+
 static const uint8_t g_ref_pubkey_e_be[REF_E_SIZE_IN_BYTES] = { 0x00,0x01,0x00,0x01 };
 static const uint8_t g_ref_pubkey_n_be[REF_N_SIZE_IN_BYTES] = {
     0xd3, 0x96, 0xf9, 0x43, 0x43, 0x11, 0x00, 0x1c, 0x69, 0x44, 0x9c,
@@ -125,16 +135,29 @@ static const char QE_ATT_STRING[] = "TDX_QE_DER";
 #define MIN_CERT_DATA_SIZE (500)
 
 static bool is_verify_report2_available() {
+#ifdef SE_SIM
+  set_tdqe_debug_stage(9, "is_verify_report2_available: SE_SIM bypass -> true");
+  return true;
+#else
+  set_tdqe_debug_stage(10, "is_verify_report2_available: enter");
   sgx_report2_mac_struct_t dummy_report_mac_struct;
+  set_tdqe_debug_stage(11, "is_verify_report2_available: before memset");
   memset(&dummy_report_mac_struct, 0, sizeof(dummy_report_mac_struct));
+  set_tdqe_debug_stage(12, "is_verify_report2_available: after memset");
   dummy_report_mac_struct.report_type.type = TEE_REPORT2_TYPE;
+  set_tdqe_debug_stage(13, "is_verify_report2_available: after report_type.type");
   dummy_report_mac_struct.report_type.subtype = TEE_REPORT2_SUBTYPE_0;
+  set_tdqe_debug_stage(14, "is_verify_report2_available: after report_type.subtype");
   dummy_report_mac_struct.report_type.version = TEE_REPORT2_VERSION_0;
+  set_tdqe_debug_stage(15, "is_verify_report2_available: before sgx_verify_report2");
   if (SGX_ERROR_FEATURE_NOT_SUPPORTED ==
       sgx_verify_report2(&dummy_report_mac_struct)) {
+    set_tdqe_debug_stage(16, "is_verify_report2_available: feature not supported");
     return false;
   }
+  set_tdqe_debug_stage(17, "is_verify_report2_available: supported");
   return true;
+#endif
 }
 
 static bool is_supported_att_key_algorithm(uint32_t algorithm_id)
@@ -279,19 +302,234 @@ static tdqe_error_t get_att_key_based_from_seal_key_mldsa(uint8_t *p_att_pub_key
     uint8_t *p_att_priv_key,
     const sgx_key_id_t *p_req_key_id)
 {
+    set_tdqe_debug_stage(180, "gen_att_key mldsa helper: enter");
     uint8_t att_seed[TDQE_MLDSA_65_SEED_SIZE] = {0};
+    set_tdqe_debug_stage(181, "gen_att_key mldsa helper: before seal-key seed derivation");
     tdqe_error_t ret = get_att_key_seed_from_seal_key(att_seed, sizeof(att_seed), p_req_key_id);
+    set_tdqe_debug_stage(182, "gen_att_key mldsa helper: after seal-key seed derivation");
     if (TDQE_SUCCESS != ret) {
         return ret;
     }
 
+    set_tdqe_debug_stage(183, "gen_att_key mldsa helper: before tdqe_mldsa65_keygen");
     if (0 != tdqe_mldsa65_keygen(p_att_pub_key, p_att_priv_key, att_seed)) {
         (void)memset_s(att_seed, sizeof(att_seed), 0, sizeof(att_seed));
         return TDQE_ERROR_ATT_KEY_GEN;
     }
+    set_tdqe_debug_stage(184, "gen_att_key mldsa helper: after tdqe_mldsa65_keygen");
 
     (void)memset_s(att_seed, sizeof(att_seed), 0, sizeof(att_seed));
     return TDQE_SUCCESS;
+}
+
+static tdqe_error_t get_att_key_based_from_seal_key(sgx_ec256_private_t *p_att_priv_key,
+    sgx_ec256_public_t  *p_att_pub_key,
+    const sgx_key_id_t *p_req_key_id);
+
+static tdqe_error_t gen_att_key_mldsa_impl(
+    uint8_t *p_blob,
+    uint32_t blob_size,
+    const sgx_target_info_t *p_pce_target_info,
+    sgx_report_t *p_tdqe_report,
+    uint8_t *p_authentication_data,
+    uint32_t authentication_data_size,
+    sgx_sha_state_handle_t *p_sha_handle)
+{
+    tdqe_error_t ret = TDQE_SUCCESS;
+    sgx_status_t sgx_status = SGX_SUCCESS;
+    sgx_report_data_t report_data = { 0 };
+    ref_plaintext_mldsa_65_data_sdk_t plaintext_data_mldsa;
+    ref_ciphertext_mldsa_65_data_sdk_t mldsa_ciphertext_data;
+    sgx_key_id_t req_key_id = { 0 };
+    sgx_sha_state_handle_t local_sha_handle = NULL;
+    sgx_sha_state_handle_t *sha_handle = p_sha_handle ? p_sha_handle : &local_sha_handle;
+
+    memset(&plaintext_data_mldsa, 0, sizeof(plaintext_data_mldsa));
+    memset(&mldsa_ciphertext_data, 0, sizeof(mldsa_ciphertext_data));
+
+    set_tdqe_debug_stage(190, "gen_att_key mldsa: branch selected");
+    plaintext_data_mldsa.authentication_data_size = authentication_data_size;
+    if (p_authentication_data) {
+        set_tdqe_debug_stage(191, "gen_att_key mldsa: before authdata copy");
+        sgx_lfence();
+        memcpy(plaintext_data_mldsa.authentication_data, p_authentication_data, sizeof(plaintext_data_mldsa.authentication_data));
+        set_tdqe_debug_stage(192, "gen_att_key mldsa: after authdata copy");
+    }
+
+    set_tdqe_debug_stage(200, "gen_att_key mldsa: before key derivation");
+    ret = get_att_key_based_from_seal_key_mldsa(
+        plaintext_data_mldsa.mldsa_att_public_key,
+        mldsa_ciphertext_data.mldsa_private_key,
+        &req_key_id);
+    set_tdqe_debug_stage(201, "gen_att_key mldsa: after key derivation");
+    if (TDQE_SUCCESS != ret) {
+        goto ret_point;
+    }
+
+    do {
+        set_tdqe_debug_stage(210, "gen_att_key mldsa: before sha256_init");
+        sgx_status = sgx_sha256_init(sha_handle);
+        if (SGX_SUCCESS != sgx_status) {
+            break;
+        }
+
+            set_tdqe_debug_stage(211, "gen_att_key mldsa: before sha256 pubkey update");
+            sgx_status = sgx_sha256_update((uint8_t*)plaintext_data_mldsa.mldsa_att_public_key,
+                sizeof(plaintext_data_mldsa.mldsa_att_public_key),
+                *sha_handle);
+        if (SGX_SUCCESS != sgx_status) {
+            break;
+        }
+
+            set_tdqe_debug_stage(212, "gen_att_key mldsa: before sha256 authdata update");
+            sgx_status = sgx_sha256_update((uint8_t*)plaintext_data_mldsa.authentication_data,
+                sizeof(plaintext_data_mldsa.authentication_data),
+                *sha_handle);
+        if (SGX_SUCCESS != sgx_status) {
+            break;
+        }
+
+            set_tdqe_debug_stage(213, "gen_att_key mldsa: before sha256 get hash");
+            sgx_status = sgx_sha256_get_hash(*sha_handle, &plaintext_data_mldsa.mldsa_id);
+        if (SGX_SUCCESS != sgx_status) {
+            break;
+        }
+    } while (0);
+    set_tdqe_debug_stage(214, "gen_att_key mldsa: after sha256 sequence");
+    if (SGX_SUCCESS != sgx_status) {
+        ret = TDQE_ERROR_UNEXPECTED;
+        goto ret_point;
+    }
+
+    ref_static_assert(sizeof(plaintext_data_mldsa.mldsa_id) <= sizeof(report_data));
+    memcpy(&report_data, &plaintext_data_mldsa.mldsa_id, sizeof(plaintext_data_mldsa.mldsa_id));
+
+    set_tdqe_debug_stage(220, "gen_att_key mldsa: before sgx_create_report");
+    sgx_status = sgx_create_report(p_pce_target_info, &report_data, p_tdqe_report);
+    set_tdqe_debug_stage(221, "gen_att_key mldsa: after sgx_create_report");
+    if (SGX_SUCCESS != sgx_status) {
+        ret = (SGX_ERROR_OUT_OF_MEMORY == sgx_status) ? TDQE_ERROR_OUT_OF_MEMORY : TDQE_ERROR_UNEXPECTED;
+        goto ret_point;
+    }
+
+    plaintext_data_mldsa.seal_blob_type = SGX_QL_SEAL_MLDSA_65_KEY_BLOB;
+    plaintext_data_mldsa.mldsa_key_version = SGX_QL_MLDSA_65_KEY_BLOB_VERSION_0;
+    set_tdqe_debug_stage(230, "gen_att_key mldsa: before sgx_seal_data");
+    sgx_status = sgx_seal_data(sizeof(plaintext_data_mldsa),
+        reinterpret_cast<uint8_t*>(&plaintext_data_mldsa),
+        sizeof(mldsa_ciphertext_data),
+        reinterpret_cast<uint8_t*>(&mldsa_ciphertext_data),
+        blob_size,
+        (sgx_sealed_data_t*)p_blob);
+    set_tdqe_debug_stage(231, "gen_att_key mldsa: after sgx_seal_data");
+    if (SGX_SUCCESS != sgx_status) {
+        ret = TDQE_ERROR_UNEXPECTED;
+        goto ret_point;
+    }
+
+ret_point:
+    if (NULL != *sha_handle) {
+        sgx_sha256_close(*sha_handle);
+        *sha_handle = NULL;
+    }
+    memset_s(&mldsa_ciphertext_data, sizeof(mldsa_ciphertext_data), 0, sizeof(mldsa_ciphertext_data));
+    return ret;
+}
+
+static uint32_t gen_att_key_ecdsa_impl(uint8_t *p_blob,
+    uint32_t blob_size,
+    const sgx_target_info_t *p_pce_target_info,
+    sgx_report_t *p_tdqe_report,
+    uint8_t *p_authentication_data,
+    uint32_t authentication_data_size)
+{
+    tdqe_error_t ret = TDQE_SUCCESS;
+    sgx_status_t sgx_status = SGX_SUCCESS;
+    sgx_sha_state_handle_t sha_handle = NULL;
+    sgx_report_data_t report_data = { 0 };
+    ref_plaintext_ecdsa_data_sdk_t plaintext_data;
+    ref_ciphertext_ecdsa_data_sdk_t ciphertext_data = {};
+    ref_ciphertext_ecdsa_data_sdk_t* pciphertext_data = &ciphertext_data;
+    sgx_key_id_t req_key_id = { 0 };
+
+    memset(&plaintext_data, 0, sizeof(plaintext_data));
+    memset(pciphertext_data, 0, sizeof(*pciphertext_data));
+
+    plaintext_data.authentication_data_size = (uint16_t)authentication_data_size;
+    if (p_authentication_data) {
+        sgx_lfence();
+        memcpy(plaintext_data.authentication_data, p_authentication_data, sizeof(plaintext_data.authentication_data));
+    }
+
+    ret = random_stack_advance(get_att_key_based_from_seal_key, &pciphertext_data->ecdsa_private_key,
+        &plaintext_data.ecdsa_att_public_key,
+        &req_key_id);
+    if (TDQE_SUCCESS != ret) {
+        if (TDQE_ERROR_CRYPTO == ret) {
+            ret = TDQE_ERROR_ATT_KEY_GEN;
+        }
+        goto ret_point;
+    }
+
+    do {
+        sgx_status = sgx_sha256_init(&sha_handle);
+        if (SGX_SUCCESS != sgx_status) {
+            break;
+        }
+
+        sgx_status = sgx_sha256_update((uint8_t*)&plaintext_data.ecdsa_att_public_key,
+            sizeof(plaintext_data.ecdsa_att_public_key),
+            sha_handle);
+        if (SGX_SUCCESS != sgx_status) {
+            break;
+        }
+
+        sgx_status = sgx_sha256_update((uint8_t*)plaintext_data.authentication_data,
+            sizeof(plaintext_data.authentication_data),
+            sha_handle);
+        if (SGX_SUCCESS != sgx_status) {
+            break;
+        }
+
+        sgx_status = sgx_sha256_get_hash(sha_handle,
+            reinterpret_cast<sgx_sha256_hash_t *>(&plaintext_data.ecdsa_id));
+        if (SGX_SUCCESS != sgx_status) {
+            break;
+        }
+    } while (0);
+    if (SGX_SUCCESS != sgx_status) {
+        ret = TDQE_ERROR_UNEXPECTED;
+        goto ret_point;
+    }
+
+    ref_static_assert(sizeof(plaintext_data.ecdsa_id) <= sizeof(report_data));
+    memcpy(&report_data, &plaintext_data.ecdsa_id, sizeof(plaintext_data.ecdsa_id));
+
+    sgx_status = sgx_create_report(p_pce_target_info, &report_data, p_tdqe_report);
+    if (SGX_SUCCESS != sgx_status) {
+        ret = (SGX_ERROR_OUT_OF_MEMORY == sgx_status) ? TDQE_ERROR_OUT_OF_MEMORY : TDQE_ERROR_UNEXPECTED;
+        goto ret_point;
+    }
+
+    plaintext_data.seal_blob_type = SGX_QL_SEAL_ECDSA_KEY_BLOB;
+    plaintext_data.ecdsa_key_version = SGX_QL_ECDSA_KEY_BLOB_VERSION_0;
+    sgx_status = sgx_seal_data(sizeof(plaintext_data),
+        reinterpret_cast<uint8_t*>(&plaintext_data),
+        sizeof(*pciphertext_data),
+        reinterpret_cast<uint8_t*>(pciphertext_data),
+        blob_size,
+        (sgx_sealed_data_t*)p_blob);
+    if (SGX_SUCCESS != sgx_status) {
+        ret = TDQE_ERROR_UNEXPECTED;
+        goto ret_point;
+    }
+
+ret_point:
+    if (NULL != sha_handle) {
+        sgx_sha256_close(sha_handle);
+    }
+    memset_s(pciphertext_data, sizeof(*pciphertext_data), 0, sizeof(*pciphertext_data));
+    return ret;
 }
 
 /**
@@ -797,8 +1035,10 @@ static tdqe_error_t verify_blob_data_any_internal(uint8_t *p_blob,
         return TDQE_ECDSABLOB_ERROR;
     }
 
+    set_tdqe_debug_stage(100, "verify_blob_any: enter");
     plaintext_length = sgx_get_add_mac_txt_len(p_sealed_blob);
     decryptedtext_length = sgx_get_encrypt_txt_len(p_sealed_blob);
+    set_tdqe_debug_stage(101, "verify_blob_any: lengths ready");
 
     if (algorithm_id == SGX_QL_ALG_ECDSA_P256) {
         if ((NULL == p_plaintext_ecdsa) || (NULL == p_secret_ecdsa_data) ||
@@ -809,11 +1049,13 @@ static tdqe_error_t verify_blob_data_any_internal(uint8_t *p_blob,
 
         memset(p_plaintext_ecdsa, 0, sizeof(*p_plaintext_ecdsa));
         memset(p_secret_ecdsa_data, 0, sizeof(*p_secret_ecdsa_data));
+        set_tdqe_debug_stage(110, "verify_blob_any: before ecdsa unseal");
         sgx_status = sgx_unseal_data(p_sealed_blob,
             reinterpret_cast<uint8_t *>(p_plaintext_ecdsa),
             &plaintext_length,
             reinterpret_cast<uint8_t *>(p_secret_ecdsa_data),
             &decryptedtext_length);
+        set_tdqe_debug_stage(111, "verify_blob_any: after ecdsa unseal");
         if (SGX_SUCCESS != sgx_status) {
             return TDQE_ECDSABLOB_ERROR;
         }
@@ -832,11 +1074,13 @@ static tdqe_error_t verify_blob_data_any_internal(uint8_t *p_blob,
 
         memset(p_plaintext_mldsa, 0, sizeof(*p_plaintext_mldsa));
         memset(p_secret_mldsa_data, 0, sizeof(*p_secret_mldsa_data));
+        set_tdqe_debug_stage(120, "verify_blob_any: before mldsa unseal");
         sgx_status = sgx_unseal_data(p_sealed_blob,
             reinterpret_cast<uint8_t *>(p_plaintext_mldsa),
             &plaintext_length,
             reinterpret_cast<uint8_t *>(p_secret_mldsa_data),
             &decryptedtext_length);
+        set_tdqe_debug_stage(121, "verify_blob_any: after mldsa unseal");
         if (SGX_SUCCESS != sgx_status) {
             return TDQE_ECDSABLOB_ERROR;
         }
@@ -849,7 +1093,9 @@ static tdqe_error_t verify_blob_data_any_internal(uint8_t *p_blob,
     }
 
     memset(&report, 0, sizeof(report));
+    set_tdqe_debug_stage(130, "verify_blob_any: before sgx_create_report");
     sgx_status = sgx_create_report(NULL, NULL, &report);
+    set_tdqe_debug_stage(131, "verify_blob_any: after sgx_create_report");
     if (SGX_SUCCESS != sgx_status) {
         ret = (SGX_ERROR_OUT_OF_MEMORY == sgx_status) ? TDQE_ERROR_OUT_OF_MEMORY : TDQE_ERROR_UNEXPECTED;
         goto ret_point;
@@ -1161,7 +1407,7 @@ ret_point:
  * @return TDQE_ERROR_ATT_KEY_GEN
  * @return TDQE_ERROR_UNEXPECTED
  */
-uint32_t gen_att_key(uint8_t *p_blob,
+static uint32_t gen_att_key_impl(uint8_t *p_blob,
     uint32_t blob_size,
     uint32_t algorithm_id,
     const sgx_target_info_t *p_pce_target_info,
@@ -1169,68 +1415,47 @@ uint32_t gen_att_key(uint8_t *p_blob,
     uint8_t *p_authentication_data,
     uint32_t authentication_data_size)
 {
-    tdqe_error_t ret = TDQE_SUCCESS;
-    sgx_status_t sgx_status = SGX_SUCCESS;
-    sgx_sha_state_handle_t sha_handle = NULL;
-    sgx_report_data_t report_data = { 0 };
-    ref_plaintext_ecdsa_data_sdk_t plaintext_data;
-    ref_plaintext_mldsa_65_data_sdk_t plaintext_data_mldsa;
+    set_tdqe_debug_stage(150, "gen_att_key impl: enter");
     const uint32_t expected_blob_size = get_tdqe_blob_size_for_algorithm(algorithm_id);
+    set_tdqe_debug_stage(151, "gen_att_key impl: expected blob size ready");
 
     if (!is_verify_report2_available()) {
       return (TDQE_ERROR_INVALID_PLATFORM);
     }
-    //
-    // provide extra protection for attestation key by
-    // randomizing its address and securely aligning it
-    //
-    using cciphertext_data = randomly_placed_object<
-        sgx::custom_alignment_aligned<
-        ref_ciphertext_ecdsa_data_sdk_t,
-        alignof(ref_ciphertext_ecdsa_data_sdk_t),
-        __builtin_offsetof(ref_ciphertext_ecdsa_data_sdk_t, ecdsa_private_key),
-        sizeof(((ref_ciphertext_ecdsa_data_sdk_t*)0)->ecdsa_private_key)>>;
-    //
-    // instance of randomly_placed_object
-    //
-    cciphertext_data ociphertext_data_buf;
-    //
-    // pointer to instance of custom_alignment_aligned
-    //
-    auto* ociphertext_data = ociphertext_data_buf.instantiate_object();
-
-    ref_ciphertext_ecdsa_data_sdk_t* pciphertext_data = &ociphertext_data->v;
-    ref_ciphertext_mldsa_65_data_sdk_t mldsa_ciphertext_data;
-    ref_ciphertext_mldsa_65_data_sdk_t* pmldsa_ciphertext_data = &mldsa_ciphertext_data;
-
-    sgx_key_id_t req_key_id = { 0 };
+    set_tdqe_debug_stage(152, "gen_att_key impl: platform capability ok");
 
     if ((NULL == p_blob) ||
         (NULL == p_pce_target_info) ||
         (NULL == p_tdqe_report))
         return(TDQE_ERROR_INVALID_PARAMETER);
+    set_tdqe_debug_stage(153, "gen_att_key impl: null pointer checks ok");
 
     if (!is_supported_att_key_algorithm(algorithm_id)) {
         return(TDQE_ERROR_UNSUPPORTED_ATT_KEY_ID);
     }
+    set_tdqe_debug_stage(154, "gen_att_key impl: algorithm supported");
 
     if (expected_blob_size != blob_size) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
+    set_tdqe_debug_stage(155, "gen_att_key impl: blob size matches algorithm");
 
     // Check whether p_blob is copied into EPC. If we want to reduce the
     // memory usage, maybe we can leave the p_blob outside EPC.
     if (!sgx_is_within_enclave(p_blob, blob_size)) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
+    set_tdqe_debug_stage(156, "gen_att_key impl: blob inside enclave");
 
     if (!sgx_is_within_enclave(p_pce_target_info, sizeof(*p_pce_target_info))) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
+    set_tdqe_debug_stage(157, "gen_att_key impl: target info inside enclave");
 
     if (!sgx_is_within_enclave(p_tdqe_report, sizeof(*p_tdqe_report))) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
+    set_tdqe_debug_stage(158, "gen_att_key impl: report buffer inside enclave");
 
     if ((p_pce_target_info->attributes.flags & SGX_FLAGS_PROVISION_KEY) !=
         SGX_FLAGS_PROVISION_KEY || (p_pce_target_info->attributes.flags & SGX_FLAGS_DEBUG) != 0)
@@ -1239,6 +1464,7 @@ uint32_t gen_att_key(uint8_t *p_blob,
         //Can't be debug PCE
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
+    set_tdqe_debug_stage(159, "gen_att_key impl: target attributes accepted");
 
     // The quote attestation key is bound together with authentication_data via the QE report data hash.
     if ((0 != authentication_data_size) && (NULL == p_authentication_data)) {
@@ -1247,6 +1473,7 @@ uint32_t gen_att_key(uint8_t *p_blob,
     if ((0 == authentication_data_size) && (NULL != p_authentication_data)) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
+    set_tdqe_debug_stage(160, "gen_att_key impl: authdata nullability ok");
     if (p_authentication_data) {
         if (!sgx_is_within_enclave(p_authentication_data, authentication_data_size)) {
             return(TDQE_ERROR_INVALID_PARAMETER);
@@ -1257,179 +1484,51 @@ uint32_t gen_att_key(uint8_t *p_blob,
             return(TDQE_ERROR_INVALID_PARAMETER);
         }
     }
-
-    memset(&plaintext_data, 0, sizeof(plaintext_data));
-    memset(&plaintext_data_mldsa, 0, sizeof(plaintext_data_mldsa));
-    memset(pciphertext_data, 0, sizeof(*pciphertext_data));
-    memset(pmldsa_ciphertext_data, 0, sizeof(*pmldsa_ciphertext_data));
+    set_tdqe_debug_stage(161, "gen_att_key impl: authdata buffer accepted");
 
     if (UINT16_MAX < authentication_data_size) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
+    set_tdqe_debug_stage(162, "gen_att_key impl: authdata size fits uint16");
     if (algorithm_id == SGX_QL_ALG_ECDSA_P256) {
-        plaintext_data.authentication_data_size = (uint16_t)authentication_data_size;
-        if (p_authentication_data) {
-            sgx_lfence();
-            memcpy(plaintext_data.authentication_data, p_authentication_data, sizeof(plaintext_data.authentication_data));
-        }
-
-        ret = random_stack_advance(get_att_key_based_from_seal_key,&pciphertext_data->ecdsa_private_key,
-            &plaintext_data.ecdsa_att_public_key,
-            &req_key_id);
-        if (TDQE_SUCCESS != ret) {
-            if (TDQE_ERROR_CRYPTO == ret) {
-                ret = TDQE_ERROR_ATT_KEY_GEN;
-            }
-            goto ret_point;
-        }
-        // Public key is returned in big endian format. Store public key and generate the hash using big
-        // endian format.
-        // The Private key is returned in little endian format. Store the private key is little endian
-        // as the signing algorithm is uses little endian format.
-
-        do {
-            sgx_status = sgx_sha256_init(&sha_handle);
-            if (SGX_SUCCESS != sgx_status) {
-                break;
-            }
-
-            sgx_status = sgx_sha256_update((uint8_t*)&plaintext_data.ecdsa_att_public_key,
-                sizeof(plaintext_data.ecdsa_att_public_key),
-                sha_handle);
-            if (SGX_SUCCESS != sgx_status) {
-                break;
-            }
-
-            sgx_status = sgx_sha256_update((uint8_t*)plaintext_data.authentication_data,
-                sizeof(plaintext_data.authentication_data),
-                sha_handle);
-            if (SGX_SUCCESS != sgx_status) {
-                break;
-            }
-
-            sgx_status = sgx_sha256_get_hash(sha_handle,
-                reinterpret_cast<sgx_sha256_hash_t *>(&plaintext_data.ecdsa_id));
-            if (SGX_SUCCESS != sgx_status) {
-                break;
-            }
-
-        } while (0);
-        if (SGX_SUCCESS != sgx_status) {
-            ret = TDQE_ERROR_UNEXPECTED;
-            goto ret_point;
-        }
-        ref_static_assert(sizeof(plaintext_data.ecdsa_id) <= sizeof(report_data));
-        memcpy(&report_data, &plaintext_data.ecdsa_id, sizeof(plaintext_data.ecdsa_id));
-
-        sgx_status = sgx_create_report(p_pce_target_info, &report_data, p_tdqe_report);
-        if (SGX_SUCCESS != sgx_status) {
-            if (SGX_ERROR_OUT_OF_MEMORY == sgx_status) {
-                ret = TDQE_ERROR_OUT_OF_MEMORY;
-            }
-            else {
-                ret = TDQE_ERROR_UNEXPECTED;
-            }
-            goto ret_point;
-        }
-
-        plaintext_data.seal_blob_type = SGX_QL_SEAL_ECDSA_KEY_BLOB;
-        plaintext_data.ecdsa_key_version = SGX_QL_ECDSA_KEY_BLOB_VERSION_0;
-        sgx_status = sgx_seal_data(sizeof(plaintext_data),
-            reinterpret_cast<uint8_t*>(&plaintext_data),
-            sizeof(*pciphertext_data),
-            reinterpret_cast<uint8_t*>(pciphertext_data),
+        set_tdqe_debug_stage(163, "gen_att_key impl: dispatching to ecdsa helper");
+        return gen_att_key_ecdsa_impl(
+            p_blob,
             blob_size,
-            (sgx_sealed_data_t*)p_blob);
-        if (SGX_SUCCESS != sgx_status) {
-            ret = TDQE_ERROR_UNEXPECTED;
-            goto ret_point;
-        }
+            p_pce_target_info,
+            p_tdqe_report,
+            p_authentication_data,
+            authentication_data_size);
     } else {
-        plaintext_data_mldsa.authentication_data_size = authentication_data_size;
-        if (p_authentication_data) {
-            sgx_lfence();
-            memcpy(plaintext_data_mldsa.authentication_data, p_authentication_data, sizeof(plaintext_data_mldsa.authentication_data));
-        }
-
-        ret = get_att_key_based_from_seal_key_mldsa(plaintext_data_mldsa.mldsa_att_public_key,
-            pmldsa_ciphertext_data->mldsa_private_key,
-            &req_key_id);
-        if (TDQE_SUCCESS != ret) {
-            goto ret_point;
-        }
-
-        do {
-            sgx_status = sgx_sha256_init(&sha_handle);
-            if (SGX_SUCCESS != sgx_status) {
-                break;
-            }
-
-            sgx_status = sgx_sha256_update((uint8_t*)plaintext_data_mldsa.mldsa_att_public_key,
-                sizeof(plaintext_data_mldsa.mldsa_att_public_key),
-                sha_handle);
-            if (SGX_SUCCESS != sgx_status) {
-                break;
-            }
-
-            sgx_status = sgx_sha256_update((uint8_t*)plaintext_data_mldsa.authentication_data,
-                sizeof(plaintext_data_mldsa.authentication_data),
-                sha_handle);
-            if (SGX_SUCCESS != sgx_status) {
-                break;
-            }
-
-            sgx_status = sgx_sha256_get_hash(sha_handle, &plaintext_data_mldsa.mldsa_id);
-            if (SGX_SUCCESS != sgx_status) {
-                break;
-            }
-
-        } while (0);
-        if (SGX_SUCCESS != sgx_status) {
-            ret = TDQE_ERROR_UNEXPECTED;
-            goto ret_point;
-        }
-        ref_static_assert(sizeof(plaintext_data_mldsa.mldsa_id) <= sizeof(report_data));
-        memcpy(&report_data, &plaintext_data_mldsa.mldsa_id, sizeof(plaintext_data_mldsa.mldsa_id));
-
-        sgx_status = sgx_create_report(p_pce_target_info, &report_data, p_tdqe_report);
-        if (SGX_SUCCESS != sgx_status) {
-            if (SGX_ERROR_OUT_OF_MEMORY == sgx_status) {
-                ret = TDQE_ERROR_OUT_OF_MEMORY;
-            }
-            else {
-                ret = TDQE_ERROR_UNEXPECTED;
-            }
-            goto ret_point;
-        }
-
-        plaintext_data_mldsa.seal_blob_type = SGX_QL_SEAL_MLDSA_65_KEY_BLOB;
-        plaintext_data_mldsa.mldsa_key_version = SGX_QL_MLDSA_65_KEY_BLOB_VERSION_0;
-        sgx_status = sgx_seal_data(sizeof(plaintext_data_mldsa),
-            reinterpret_cast<uint8_t*>(&plaintext_data_mldsa),
-            sizeof(*pmldsa_ciphertext_data),
-            reinterpret_cast<uint8_t*>(pmldsa_ciphertext_data),
+        set_tdqe_debug_stage(164, "gen_att_key impl: dispatching to mldsa helper");
+        return gen_att_key_mldsa_impl(
+            p_blob,
             blob_size,
-            (sgx_sealed_data_t*)p_blob);
-        if (SGX_SUCCESS != sgx_status) {
-            ret = TDQE_ERROR_UNEXPECTED;
-            goto ret_point;
-        }
+            p_pce_target_info,
+            p_tdqe_report,
+            p_authentication_data,
+            authentication_data_size,
+            nullptr);
     }
+}
 
-ret_point:
-    // Clear output data on error
-    if (TDQE_SUCCESS != ret) {
-        (void)memset_s(p_tdqe_report, sizeof(*p_tdqe_report), 0, sizeof(*p_tdqe_report));
-    }
-
-    if (NULL != sha_handle) {
-        sgx_sha256_close(sha_handle);
-    }
-
-    // Clear out any sensitive data from the stack before returning.
-    memset_s(pciphertext_data, sizeof(*pciphertext_data), 0, sizeof(*pciphertext_data));
-    memset_s(pmldsa_ciphertext_data, sizeof(*pmldsa_ciphertext_data), 0, sizeof(*pmldsa_ciphertext_data));
-    return(ret);
+uint32_t gen_att_key(uint8_t *p_blob,
+    uint32_t blob_size,
+    uint32_t algorithm_id,
+    const sgx_target_info_t *p_pce_target_info,
+    sgx_report_t *p_tdqe_report,
+    uint8_t *p_authentication_data,
+    uint32_t authentication_data_size)
+{
+    set_tdqe_debug_stage(140, "gen_att_key wrapper: enter");
+    return gen_att_key_impl(
+        p_blob,
+        blob_size,
+        algorithm_id,
+        p_pce_target_info,
+        p_tdqe_report,
+        p_authentication_data,
+        authentication_data_size);
 }
 
 /**
@@ -1911,9 +2010,11 @@ uint32_t gen_quote(uint8_t *p_blob,
     bool tdid_present = false;
     bool vmid_present = false;
 
+    set_tdqe_debug_stage(300, "gen_quote: enter");
     if (!is_verify_report2_available()) {
         return (TDQE_ERROR_INVALID_PLATFORM);
     }
+    set_tdqe_debug_stage(301, "gen_quote: report2 availability ok");
     //
     // provide extra protection for attestation key by
     // randomizing its address and securely aligning it
@@ -1927,11 +2028,13 @@ uint32_t gen_quote(uint8_t *p_blob,
     //
     // instance of randomly_placed_object
     //
+    set_tdqe_debug_stage(302, "gen_quote: before randomized ciphertext buffer");
     cciphertext ociphertext_buf;
     //
     // pointer to instance of custom_alignment_aligned
     //
     auto* ociphertext = ociphertext_buf.instantiate_object();
+    set_tdqe_debug_stage(303, "gen_quote: randomized ciphertext buffer ready");
     ref_ciphertext_ecdsa_data_sdk_t* pciphertext = &ociphertext->v;
     ref_ciphertext_mldsa_65_data_sdk_t ciphertext_mldsa;
     ref_ciphertext_mldsa_65_data_sdk_t* pciphertext_mldsa = &ciphertext_mldsa;
@@ -1962,6 +2065,7 @@ uint32_t gen_quote(uint8_t *p_blob,
     memset(&plaintext, 0, sizeof(plaintext));
     memset(&plaintext_mldsa, 0, sizeof(plaintext_mldsa));
     memset(pciphertext_mldsa, 0, sizeof(*pciphertext_mldsa));
+    set_tdqe_debug_stage(304, "gen_quote: local buffers zeroed");
 
     // Actually, some cases here will be checked with code generated by
     // edger8r. Here we just want to defend in depth.
@@ -1971,12 +2075,15 @@ uint32_t gen_quote(uint8_t *p_blob,
         (!quote_size)) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
+    set_tdqe_debug_stage(305, "gen_quote: required pointers ok");
     if (!is_supported_att_key_algorithm(algorithm_id)) {
         return(TDQE_ERROR_UNSUPPORTED_ATT_KEY_ID);
     }
+    set_tdqe_debug_stage(306, "gen_quote: algorithm supported");
     if (blob_size != get_tdqe_blob_size_for_algorithm(algorithm_id)) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
+    set_tdqe_debug_stage(307, "gen_quote: blob size matches algorithm");
     // All these 3 parameters should be all NULL or all not NULL.
     if (!((NULL == p_nonce) && (NULL == p_app_enclave_target_info) && (NULL == p_qe_report_out))
         && !((NULL != p_nonce) && (NULL != p_app_enclave_target_info) && (NULL != p_qe_report_out))) {
@@ -1999,6 +2106,7 @@ uint32_t gen_quote(uint8_t *p_blob,
     if (NULL == p_certification_data && cert_data_size !=0) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
+    set_tdqe_debug_stage(308, "gen_quote: certification-data inputs accepted");
 
 
     // The ECDSA Quote is not so large that it needs to be outside the enclave.  Verify the full buffer is within
@@ -2006,21 +2114,25 @@ uint32_t gen_quote(uint8_t *p_blob,
     if (!sgx_is_within_enclave(p_quote_buf, quote_size)) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
+    set_tdqe_debug_stage(309, "gen_quote: quote buffer inside enclave");
 
     /* Check whether p_blob is copied into EPC. If we want to reduce the
        memory usage, maybe we can leave the p_blob outside EPC. */
     if (!sgx_is_within_enclave(p_blob, blob_size)) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
+    set_tdqe_debug_stage(310, "gen_quote: blob inside enclave");
     if (!sgx_is_within_enclave(p_td_report, sizeof(*p_td_report))) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
+    set_tdqe_debug_stage(311, "gen_quote: td report inside enclave");
 
     if (NULL != p_certification_data) {
         if (!sgx_is_within_enclave(p_certification_data, cert_data_size)) {
             return(TDQE_ERROR_INVALID_PARAMETER);
         }
     }
+    set_tdqe_debug_stage(312, "gen_quote: certification-data buffer accepted");
 
     // If the code reaches here, if p_nonce is NULL, then p_qe_report will be
     // NULL also. So we only check p_nonce here.
@@ -2037,6 +2149,7 @@ uint32_t gen_quote(uint8_t *p_blob,
             return(TDQE_ERROR_INVALID_PARAMETER);
         }
     }
+    set_tdqe_debug_stage(313, "gen_quote: nonce/report-target inputs accepted");
 
     ret = determine_quote_version(p_td_report,
                     &gen_v5_quote,
@@ -2047,9 +2160,17 @@ uint32_t gen_quote(uint8_t *p_blob,
     if (TDQE_SUCCESS != ret) {
         return (ret);
     }
+    set_tdqe_debug_stage(314, "gen_quote: determine_quote_version ok");
 
     // Verify the input report.
+    set_tdqe_debug_stage(315, "gen_quote: before sgx_verify_report2");
+#ifdef SE_SIM
+    set_tdqe_debug_stage(316, "gen_quote: SE_SIM bypass sgx_verify_report2");
+    sgx_status = SGX_SUCCESS;
+#else
     sgx_status = sgx_verify_report2(&p_td_report->report_mac_struct);
+    set_tdqe_debug_stage(316, "gen_quote: after sgx_verify_report2");
+#endif
     if (SGX_SUCCESS != sgx_status) {
         if (SGX_ERROR_INVALID_PARAMETER == sgx_status) {
             return(TDQE_REPORT_FORMAT_NOT_SUPPORTED);
@@ -2060,7 +2181,9 @@ uint32_t gen_quote(uint8_t *p_blob,
     }
 
     // tee tcb info hash
+    set_tdqe_debug_stage(317, "gen_quote: before tee_tcb_info sha384");
     sgx_status = sgx_sha384_msg((uint8_t *)(&(p_td_report->tee_tcb_info)), sizeof(p_td_report->tee_tcb_info), &hash384_buf);
+    set_tdqe_debug_stage(318, "gen_quote: after tee_tcb_info sha384");
     if (SGX_SUCCESS != sgx_status) {
         ret = TDQE_ERROR_UNEXPECTED;
         goto ret_point;
@@ -2075,7 +2198,9 @@ uint32_t gen_quote(uint8_t *p_blob,
     memset(&hash384_buf, 0x00, sizeof(hash384_buf));
 
     // td info hash
+    set_tdqe_debug_stage(319, "gen_quote: before tee_info sha384");
     sgx_status = sgx_sha384_msg((uint8_t *)(&(p_td_report->tee_info)), sizeof(p_td_report->tee_info), &hash384_buf);
+    set_tdqe_debug_stage(320, "gen_quote: after tee_info sha384");
     if (SGX_SUCCESS != sgx_status) {
         ret = TDQE_ERROR_UNEXPECTED;
         goto ret_point;
@@ -2088,6 +2213,7 @@ uint32_t gen_quote(uint8_t *p_blob,
     }
 
     // Verify the selected attestation-key blob and create the algorithm-specific context.
+    set_tdqe_debug_stage(321, "gen_quote: before verify_blob_data_any_internal");
     ret = random_stack_advance(verify_blob_data_any_internal,p_blob,
         blob_size,
         algorithm_id,
@@ -2096,6 +2222,7 @@ uint32_t gen_quote(uint8_t *p_blob,
         pciphertext,
         &plaintext_mldsa,
         pciphertext_mldsa);
+    set_tdqe_debug_stage(322, "gen_quote: after verify_blob_data_any_internal");
     if (TDQE_SUCCESS != ret) {
         goto ret_point;
     }
@@ -2121,6 +2248,7 @@ uint32_t gen_quote(uint8_t *p_blob,
         blob_is_clear_ppid = pciphertext_mldsa->is_clear_ppid;
         p_blob_encrypted_ppid = &pciphertext_mldsa->encrypted_ppid_data;
     }
+    set_tdqe_debug_stage(323, "gen_quote: blob context selected");
 
     sign_size = get_quote_sig_data_struct_size(algorithm_id) + // Attestation algorithm specific signature data structure
         sizeof(sgx_ql_auth_data_t) +
@@ -2154,6 +2282,7 @@ uint32_t gen_quote(uint8_t *p_blob,
         goto ret_point;
     }
     sign_size += authentication_data_size;     // Authentication data
+    set_tdqe_debug_stage(324, "gen_quote: sign_size computed");
 
     // Always require buffer size for quote v5 type 4, which is big enough for both v4 and v5 quote.
     required_buffer_size = sizeof(sgx_quote5_t)
@@ -2180,6 +2309,7 @@ uint32_t gen_quote(uint8_t *p_blob,
         ret = TDQE_ERROR_INVALID_PARAMETER;
         goto ret_point;
     }
+    set_tdqe_debug_stage(325, "gen_quote: quote buffer size accepted");
 
     // Verify sizeof header.userdata is large enough
     ref_static_assert(sizeof(plaintext.qe_id) <= sizeof(p_quote->header.user_data));
@@ -2187,6 +2317,7 @@ uint32_t gen_quote(uint8_t *p_blob,
     // Clear out the quote buffer
     sgx_lfence();
     memset(p_quote_buf, 0, required_buffer_size);
+    set_tdqe_debug_stage(326, "gen_quote: quote buffer zeroed");
     // Set up the component quote structure pointers to point to the correct place within the inputted quote buffer.
     p_quote = (sgx_quote4_t *)p_quote_buf;
     p_quote_v5 = (sgx_quote5_t *)p_quote_buf;
@@ -2214,6 +2345,7 @@ uint32_t gen_quote(uint8_t *p_blob,
         break;
     }
     *p_sig_len = sign_size;
+    set_tdqe_debug_stage(327, "gen_quote: quote header/sign pointers initialized");
 
     p_qe_report_cert_header = ((sgx_ql_certification_data_t *)(p_quote_sig_certification_data));
     p_qe_report_cert_data = (sgx_qe_report_certification_data_t *)(p_qe_report_cert_header->certification_data);
@@ -2335,7 +2467,9 @@ uint32_t gen_quote(uint8_t *p_blob,
     }
 
     memset(&qe_report_data, 0, sizeof(qe_report_data));
+    set_tdqe_debug_stage(328, "gen_quote: before sgx_create_report(qe_report)");
     sgx_status = sgx_create_report(NULL, &qe_report_data, &qe_report);
+    set_tdqe_debug_stage(329, "gen_quote: after sgx_create_report(qe_report)");
     if (SGX_SUCCESS != sgx_status) {
         if (SGX_ERROR_OUT_OF_MEMORY == sgx_status) {
             ret = TDQE_ERROR_OUT_OF_MEMORY;
@@ -2407,6 +2541,7 @@ uint32_t gen_quote(uint8_t *p_blob,
         }
         memcpy(p_quote_sig_pub_key, &plaintext.ecdsa_att_public_key, sizeof(plaintext.ecdsa_att_public_key));
     } else {
+        set_tdqe_debug_stage(330, "gen_quote mldsa: before tdqe_mldsa65_sign");
         if (0 != tdqe_mldsa65_sign(p_quote_sig,
             p_quote_buf,
             sign_buf_size,
@@ -2414,6 +2549,8 @@ uint32_t gen_quote(uint8_t *p_blob,
             ret = TDQE_ERROR_UNEXPECTED;
             goto ret_point;
         }
+        set_tdqe_debug_stage(331, "gen_quote mldsa: after tdqe_mldsa65_sign");
+        set_tdqe_debug_stage(332, "gen_quote mldsa: before tdqe_mldsa65_verify");
         if (0 != tdqe_mldsa65_verify(p_quote_sig,
             p_quote_buf,
             sign_buf_size,
@@ -2421,10 +2558,12 @@ uint32_t gen_quote(uint8_t *p_blob,
             ret = TDQE_ERROR_UNEXPECTED;
             goto ret_point;
         }
+        set_tdqe_debug_stage(333, "gen_quote mldsa: after tdqe_mldsa65_verify");
         memcpy(p_quote_sig_pub_key,
             plaintext_mldsa.mldsa_att_public_key,
             sizeof(plaintext_mldsa.mldsa_att_public_key));
     }
+    set_tdqe_debug_stage(334, "gen_quote: signature/public-key material populated");
 
     memcpy(&(p_qe_report_cert_data->qe_report), &p_blob_qe_report->body, sizeof(p_qe_report_cert_data->qe_report));
     memcpy(p_qe_report_cert_data->qe_report_sig, p_blob_qe_report_sig, sizeof(p_qe_report_cert_data->qe_report_sig));
@@ -2460,6 +2599,7 @@ uint32_t gen_quote(uint8_t *p_blob,
         // update p_qe_report_cert_header->size
         p_qe_report_cert_header->size = p_qe_report_cert_header->size + p_certification_data_output->size;
     }
+    set_tdqe_debug_stage(335, "gen_quote: certification data populated");
 
     // Get the QE's report if requested.
     ///todo:  It is possible that the untrusted code can change the certification data of the quote (including the

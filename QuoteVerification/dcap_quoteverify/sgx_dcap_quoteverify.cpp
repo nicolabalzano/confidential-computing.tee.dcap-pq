@@ -55,6 +55,23 @@ std::shared_ptr<tee_qv_base> global_tee_qv = NULL;
 sgx_enclave_id_t g_qve_eid = 0;
 std::mutex qve_mutex;
 
+static bool qv_verbose_debug_enabled() {
+#ifndef _MSC_VER
+    const char *value = secure_getenv("TDX_MLDSA_VERBOSE_DEBUG");
+#else
+    const char *value = getenv("TDX_MLDSA_VERBOSE_DEBUG");
+#endif
+    return value != NULL && strcmp(value, "1") == 0;
+}
+
+#define QV_VERBOSE_DEBUG(...)              \
+    do {                                   \
+        if (qv_verbose_debug_enabled()) {  \
+            fprintf(stderr, __VA_ARGS__);  \
+            fflush(stderr);                \
+        }                                  \
+    } while (0)
+
 // Default policy is SGX_QL_EPHEMERAL, which is same with legacy DCAP QVL behavior
 //
 std::atomic<sgx_ql_request_policy_t> g_qve_policy(SGX_QL_EPHEMERAL);
@@ -652,7 +669,7 @@ quote3_error_t tee_qv_get_collateral(
     uint8_t **pp_quote_collateral,
     uint32_t *p_collateral_size)
 {
-    fprintf(stderr, "[qv-debug] tee_qv_get_collateral: enter quote_size=%u\n", quote_size);
+    QV_VERBOSE_DEBUG("[qv-debug] tee_qv_get_collateral: enter quote_size=%u\n", quote_size);
     quote3_error_t ret = SGX_QL_SUCCESS;
     unsigned char fmspc_from_quote[FMSPC_SIZE] = {0};
     unsigned char ca_from_quote[CA_SIZE] = {0};
@@ -673,7 +690,7 @@ quote3_error_t tee_qv_get_collateral(
         FMSPC_SIZE,
         ca_from_quote,
         CA_SIZE);
-    fprintf(stderr, "[qv-debug] tee_qv_get_collateral: qvl_get_fmspc_ca_from_quote ret=0x%x\n", ret);
+    QV_VERBOSE_DEBUG("[qv-debug] tee_qv_get_collateral: qvl_get_fmspc_ca_from_quote ret=0x%x\n", ret);
     if (ret != SGX_QL_SUCCESS)
     {
         return ret;

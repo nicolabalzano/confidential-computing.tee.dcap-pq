@@ -42,10 +42,28 @@
 #include "qcnl_util.h"
 #include "sgx_pce.h"
 #include <cstdarg>
+#include <cstdio>
 #include <stdexcept>
 
 static sgx_ql_logging_callback_t logger_callback = nullptr;
 static sgx_ql_log_level_t g_loglevel = SGX_QL_LOG_ERROR;
+
+static bool qcnl_verbose_debug_enabled() {
+#ifndef _MSC_VER
+    const char *value = secure_getenv("TDX_MLDSA_VERBOSE_DEBUG");
+#else
+    const char *value = getenv("TDX_MLDSA_VERBOSE_DEBUG");
+#endif
+    return value != NULL && strcmp(value, "1") == 0;
+}
+
+#define QCNL_VERBOSE_DEBUG(...)            \
+    do {                                   \
+        if (qcnl_verbose_debug_enabled()) {\
+            fprintf(stderr, __VA_ARGS__);  \
+            fflush(stderr);                \
+        }                                  \
+    } while (0)
 
 void qcnl_log(sgx_ql_log_level_t level, const char *fmt, ...) {
     if (logger_callback != nullptr && level <= g_loglevel) {
@@ -74,6 +92,37 @@ void qcnl_log(sgx_ql_log_level_t level, const char *fmt, ...) {
 sgx_qcnl_error_t sgx_qcnl_get_pck_cert_chain(const sgx_ql_pck_cert_id_t *p_pck_cert_id,
                                              sgx_ql_config_t **pp_quote_config) {
 
+    if (p_pck_cert_id != NULL) {
+        qcnl_log(SGX_QL_LOG_INFO,
+                 "[QCNL] get_pck_cert_chain input qe3_size=%u enc_ppid_size=%u crypto_suite=%u pce_id=0x%04x qe3_prefix=%02x%02x%02x%02x enc_ppid_present=%d cpu_svn_prefix=%02x%02x pce_isvsvn=%u\n",
+                 p_pck_cert_id->qe3_id_size,
+                 p_pck_cert_id->encrypted_ppid_size,
+                 p_pck_cert_id->crypto_suite,
+                 p_pck_cert_id->pce_id,
+                 (p_pck_cert_id->p_qe3_id && p_pck_cert_id->qe3_id_size >= 4) ? p_pck_cert_id->p_qe3_id[0] : 0,
+                 (p_pck_cert_id->p_qe3_id && p_pck_cert_id->qe3_id_size >= 4) ? p_pck_cert_id->p_qe3_id[1] : 0,
+                 (p_pck_cert_id->p_qe3_id && p_pck_cert_id->qe3_id_size >= 4) ? p_pck_cert_id->p_qe3_id[2] : 0,
+                 (p_pck_cert_id->p_qe3_id && p_pck_cert_id->qe3_id_size >= 4) ? p_pck_cert_id->p_qe3_id[3] : 0,
+                 p_pck_cert_id->p_encrypted_ppid != NULL ? 1 : 0,
+                 p_pck_cert_id->p_platform_cpu_svn ? p_pck_cert_id->p_platform_cpu_svn->svn[0] : 0,
+                 p_pck_cert_id->p_platform_cpu_svn ? p_pck_cert_id->p_platform_cpu_svn->svn[1] : 0,
+                 p_pck_cert_id->p_platform_pce_isv_svn ? *p_pck_cert_id->p_platform_pce_isv_svn : 0);
+        QCNL_VERBOSE_DEBUG(
+                "[qcnl-debug] get_pck_cert_chain input qe3_size=%u enc_ppid_size=%u crypto_suite=%u pce_id=0x%04x qe3_prefix=%02x%02x%02x%02x enc_ppid_present=%d cpu_svn_prefix=%02x%02x pce_isvsvn=%u\n",
+                p_pck_cert_id->qe3_id_size,
+                p_pck_cert_id->encrypted_ppid_size,
+                p_pck_cert_id->crypto_suite,
+                p_pck_cert_id->pce_id,
+                (p_pck_cert_id->p_qe3_id && p_pck_cert_id->qe3_id_size >= 4) ? p_pck_cert_id->p_qe3_id[0] : 0,
+                (p_pck_cert_id->p_qe3_id && p_pck_cert_id->qe3_id_size >= 4) ? p_pck_cert_id->p_qe3_id[1] : 0,
+                (p_pck_cert_id->p_qe3_id && p_pck_cert_id->qe3_id_size >= 4) ? p_pck_cert_id->p_qe3_id[2] : 0,
+                (p_pck_cert_id->p_qe3_id && p_pck_cert_id->qe3_id_size >= 4) ? p_pck_cert_id->p_qe3_id[3] : 0,
+                p_pck_cert_id->p_encrypted_ppid != NULL ? 1 : 0,
+                p_pck_cert_id->p_platform_cpu_svn ? p_pck_cert_id->p_platform_cpu_svn->svn[0] : 0,
+                p_pck_cert_id->p_platform_cpu_svn ? p_pck_cert_id->p_platform_cpu_svn->svn[1] : 0,
+                p_pck_cert_id->p_platform_pce_isv_svn ? *p_pck_cert_id->p_platform_pce_isv_svn : 0);
+    }
+
     // Check input parameters
     if (p_pck_cert_id == NULL || pp_quote_config == NULL) {
         return SGX_QCNL_INVALID_PARAMETER;
@@ -93,7 +142,10 @@ sgx_qcnl_error_t sgx_qcnl_get_pck_cert_chain(const sgx_ql_pck_cert_id_t *p_pck_c
     }
 
     CertificationService certificationService;
-    return certificationService.get_pck_cert_chain(p_pck_cert_id, pp_quote_config);
+    sgx_qcnl_error_t ret = certificationService.get_pck_cert_chain(p_pck_cert_id, pp_quote_config);
+    qcnl_log(SGX_QL_LOG_INFO, "[QCNL] get_pck_cert_chain return=0x%04x\n", ret);
+    QCNL_VERBOSE_DEBUG("[qcnl-debug] get_pck_cert_chain return=0x%04x\n", ret);
+    return ret;
 }
 
 /**

@@ -41,6 +41,24 @@
 #include "pck_cert_selection.h"
 #include "qcnl_util.h"
 #include <algorithm>
+#include <cstdio>
+
+static bool qcnl_verbose_debug_enabled() {
+#ifndef _MSC_VER
+    const char *value = secure_getenv("TDX_MLDSA_VERBOSE_DEBUG");
+#else
+    const char *value = getenv("TDX_MLDSA_VERBOSE_DEBUG");
+#endif
+    return value != NULL && strcmp(value, "1") == 0;
+}
+
+#define QCNL_VERBOSE_DEBUG(...)            \
+    do {                                   \
+        if (qcnl_verbose_debug_enabled()) {\
+            fprintf(stderr, __VA_ARGS__);  \
+            fflush(stderr);                \
+        }                                  \
+    } while (0)
 
 using namespace rapidjson;
 
@@ -76,12 +94,30 @@ sgx_qcnl_error_t CertificationProvider::get_certification(const http_header_map 
     uint32_t header_size = 0;
     string url = this->base_url_ + query_string;
 
+    qcnl_log(SGX_QL_LOG_INFO, "[QCNL] CertificationProvider::get_certification url='%s' header_count=%zu\n",
+             url.c_str(), header_map.size());
+    QCNL_VERBOSE_DEBUG("[qcnl-debug] CertificationProvider::get_certification url='%s' header_count=%zu\n",
+                       url.c_str(), header_map.size());
+
     ret = qcnl_https_request(url.c_str(), header_map, NULL, 0, NULL, 0, &resp_msg, resp_size, &resp_header, header_size);
     if (ret != SGX_QCNL_SUCCESS) {
+        qcnl_log(SGX_QL_LOG_ERROR, "[QCNL] CertificationProvider::get_certification qcnl_https_request ret=0x%04x url='%s'\n",
+                 ret, url.c_str());
+        QCNL_VERBOSE_DEBUG("[qcnl-debug] CertificationProvider::get_certification qcnl_https_request ret=0x%04x url='%s'\n",
+                           ret, url.c_str());
         return ret;
     } else if (!resp_msg || resp_size == 0) {
+        qcnl_log(SGX_QL_LOG_ERROR, "[QCNL] CertificationProvider::get_certification empty response url='%s'\n",
+                 url.c_str());
+        QCNL_VERBOSE_DEBUG("[qcnl-debug] CertificationProvider::get_certification empty response url='%s'\n",
+                           url.c_str());
         return SGX_QCNL_UNEXPECTED_ERROR;
     }
+
+    qcnl_log(SGX_QL_LOG_INFO, "[QCNL] CertificationProvider::get_certification response header_size=%u body_size=%u\n",
+             header_size, resp_size);
+    QCNL_VERBOSE_DEBUG("[qcnl-debug] CertificationProvider::get_certification response header_size=%u body_size=%u\n",
+                       header_size, resp_size);
 
     pccs_resp_obj->set_raw_header(resp_header, header_size).set_raw_body(resp_msg, resp_size);
 

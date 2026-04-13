@@ -55,6 +55,23 @@ static sgx_ql_logging_callback_t logger_callback = nullptr;
 static sgx_ql_log_level_t g_loglevel = SGX_QL_LOG_ERROR;
 static const uint16_t FMSPC_SIZE = 6;
 
+static bool qpl_verbose_debug_enabled() {
+#ifndef _MSC_VER
+    const char *value = secure_getenv("TDX_MLDSA_VERBOSE_DEBUG");
+#else
+    const char *value = getenv("TDX_MLDSA_VERBOSE_DEBUG");
+#endif
+    return value != NULL && strcmp(value, "1") == 0;
+}
+
+#define QPL_VERBOSE_DEBUG(...)             \
+    do {                                   \
+        if (qpl_verbose_debug_enabled()) { \
+            fprintf(stderr, __VA_ARGS__);  \
+            fflush(stderr);                \
+        }                                  \
+    } while (0)
+
 void qpl_log(sgx_ql_log_level_t level, const char *fmt, ...) {
     if (logger_callback != nullptr && level <= g_loglevel) {
         char message[512];
@@ -113,7 +130,33 @@ static quote3_error_t qcnl_error_to_ql_error(sgx_qcnl_error_t ret) {
 }
 
 quote3_error_t sgx_ql_get_quote_config(const sgx_ql_pck_cert_id_t *p_cert_id, sgx_ql_config_t **pp_quote_config) {
+    if (p_cert_id != NULL) {
+        qpl_log(SGX_QL_LOG_INFO,
+                "[QPL] get_quote_config input qe3_size=%u enc_ppid_size=%u crypto_suite=%u pce_id=0x%04x qe3_prefix=%02x%02x%02x%02x enc_ppid_present=%d\n",
+                p_cert_id->qe3_id_size,
+                p_cert_id->encrypted_ppid_size,
+                p_cert_id->crypto_suite,
+                p_cert_id->pce_id,
+                (p_cert_id->p_qe3_id && p_cert_id->qe3_id_size >= 4) ? p_cert_id->p_qe3_id[0] : 0,
+                (p_cert_id->p_qe3_id && p_cert_id->qe3_id_size >= 4) ? p_cert_id->p_qe3_id[1] : 0,
+                (p_cert_id->p_qe3_id && p_cert_id->qe3_id_size >= 4) ? p_cert_id->p_qe3_id[2] : 0,
+                (p_cert_id->p_qe3_id && p_cert_id->qe3_id_size >= 4) ? p_cert_id->p_qe3_id[3] : 0,
+                p_cert_id->p_encrypted_ppid != NULL ? 1 : 0);
+        QPL_VERBOSE_DEBUG(
+                "[qpl-debug] get_quote_config input qe3_size=%u enc_ppid_size=%u crypto_suite=%u pce_id=0x%04x qe3_prefix=%02x%02x%02x%02x enc_ppid_present=%d\n",
+                p_cert_id->qe3_id_size,
+                p_cert_id->encrypted_ppid_size,
+                p_cert_id->crypto_suite,
+                p_cert_id->pce_id,
+                (p_cert_id->p_qe3_id && p_cert_id->qe3_id_size >= 4) ? p_cert_id->p_qe3_id[0] : 0,
+                (p_cert_id->p_qe3_id && p_cert_id->qe3_id_size >= 4) ? p_cert_id->p_qe3_id[1] : 0,
+                (p_cert_id->p_qe3_id && p_cert_id->qe3_id_size >= 4) ? p_cert_id->p_qe3_id[2] : 0,
+                (p_cert_id->p_qe3_id && p_cert_id->qe3_id_size >= 4) ? p_cert_id->p_qe3_id[3] : 0,
+                p_cert_id->p_encrypted_ppid != NULL ? 1 : 0);
+    }
     sgx_qcnl_error_t ret = sgx_qcnl_get_pck_cert_chain(p_cert_id, pp_quote_config);
+    qpl_log(SGX_QL_LOG_INFO, "[QPL] sgx_qcnl_get_pck_cert_chain ret=0x%04x\n", ret);
+    QPL_VERBOSE_DEBUG("[qpl-debug] sgx_qcnl_get_pck_cert_chain ret=0x%04x\n", ret);
 
     if (ret == SGX_QCNL_ERROR_STATUS_NO_CACHE_DATA) {
         qpl_log(SGX_QL_LOG_ERROR, "[QPL] No certificate data for this platform.\n");

@@ -39,7 +39,25 @@
 #include "qcnl_util.h"
 #include "se_memcpy.h"
 #include "sgx_ql_lib_common.h"
+#include <cstdio>
 #include <regex>
+
+static bool qcnl_verbose_debug_enabled() {
+#ifndef _MSC_VER
+    const char *value = secure_getenv("TDX_MLDSA_VERBOSE_DEBUG");
+#else
+    const char *value = getenv("TDX_MLDSA_VERBOSE_DEBUG");
+#endif
+    return value != NULL && strcmp(value, "1") == 0;
+}
+
+#define QCNL_VERBOSE_DEBUG(...)            \
+    do {                                   \
+        if (qcnl_verbose_debug_enabled()) {\
+            fprintf(stderr, __VA_ARGS__);  \
+            fflush(stderr);                \
+        }                                  \
+    } while (0)
 
 #ifdef _MSC_VER
 #undef GetObject
@@ -102,9 +120,24 @@ sgx_qcnl_error_t CertificationService::fetch_data(RequestType type, const Reques
     } else {
         query_str = request.params;
     }
+    qcnl_log(SGX_QL_LOG_INFO,
+             "[QCNL] fetch_data type=%d endpoint='%s' params='%s' cache_query='%s'\n",
+             static_cast<int>(type),
+             request.endpoint.c_str(),
+             request.params.c_str(),
+             query_str.c_str());
+    QCNL_VERBOSE_DEBUG("[qcnl-debug] fetch_data type=%d endpoint='%s' params='%s' cache_query='%s'\n",
+                       static_cast<int>(type),
+                       request.endpoint.c_str(),
+                       request.params.c_str(),
+                       query_str.c_str());
     if ((ret = cacheProvider.get_certification(query_str, &pccs_resp_obj)) == SGX_QCNL_SUCCESS) {
+        qcnl_log(SGX_QL_LOG_INFO, "[QCNL] fetch_data cache hit ret=0x%04x\n", ret);
+        QCNL_VERBOSE_DEBUG("[qcnl-debug] fetch_data cache hit ret=0x%04x\n", ret);
         return handlerData->handler(&pccs_resp_obj, handlerData->args);
     }
+    qcnl_log(SGX_QL_LOG_INFO, "[QCNL] fetch_data cache ret=0x%04x\n", ret);
+    QCNL_VERBOSE_DEBUG("[qcnl-debug] fetch_data cache ret=0x%04x\n", ret);
 
     qcnl_log(SGX_QL_LOG_INFO,
              "[QCNL] Data not found in local cache. Trying to fetch response from remote URL: '%s'. \n",
@@ -115,10 +148,21 @@ sgx_qcnl_error_t CertificationService::fetch_data(RequestType type, const Reques
                  "[QCNL] Successfully fetched certificate from remote URL: '%s'. \n",
                  request.endpoint.c_str());
         sgx_qcnl_error_t handler_ret = handlerData->handler(&pccs_resp_obj, handlerData->args);
+        qcnl_log(SGX_QL_LOG_INFO, "[QCNL] fetch_data handler_ret=0x%04x\n", handler_ret);
+        QCNL_VERBOSE_DEBUG("[qcnl-debug] fetch_data handler_ret=0x%04x\n", handler_ret);
         if (handler_ret == SGX_QCNL_SUCCESS) {
             ret = cacheProvider.set_certification(get_cache_type_of_request(type),
                                                   query_str, &pccs_resp_obj); // User query_str for caching key
+            qcnl_log(SGX_QL_LOG_INFO, "[QCNL] fetch_data cache store ret=0x%04x\n", ret);
+            QCNL_VERBOSE_DEBUG("[qcnl-debug] fetch_data cache store ret=0x%04x\n", ret);
+        } else {
+            ret = handler_ret;
         }
+    } else {
+        qcnl_log(SGX_QL_LOG_ERROR, "[QCNL] fetch_data remote ret=0x%04x endpoint='%s'\n",
+                 ret, request.endpoint.c_str());
+        QCNL_VERBOSE_DEBUG("[qcnl-debug] fetch_data remote ret=0x%04x endpoint='%s'\n",
+                           ret, request.endpoint.c_str());
     }
     return ret;
 }
@@ -187,10 +231,26 @@ string CertificationService::get_custom_param_string() {
 sgx_qcnl_error_t CertificationService::build_pckcert_options(Request &request, const sgx_ql_pck_cert_id_t *p_pck_cert_id) {
     sgx_qcnl_error_t ret = SGX_QCNL_UNEXPECTED_ERROR;
     request.endpoint = QcnlConfig::Instance()->getServerUrl();
+    qcnl_log(SGX_QL_LOG_INFO,
+             "[QCNL] build_pckcert_options server_url='%s' qe3_size=%u enc_ppid_size=%u pce_id=0x%04x crypto_suite=%u\n",
+             request.endpoint.c_str(),
+             p_pck_cert_id->qe3_id_size,
+             p_pck_cert_id->encrypted_ppid_size,
+             p_pck_cert_id->pce_id,
+             p_pck_cert_id->crypto_suite);
+    QCNL_VERBOSE_DEBUG("[qcnl-debug] build_pckcert_options server_url='%s' qe3_size=%u enc_ppid_size=%u pce_id=0x%04x crypto_suite=%u\n",
+                       request.endpoint.c_str(),
+                       p_pck_cert_id->qe3_id_size,
+                       p_pck_cert_id->encrypted_ppid_size,
+                       p_pck_cert_id->pce_id,
+                       p_pck_cert_id->crypto_suite);
 
     // Append QE ID
     request.params.append("pckcert?qeid=");
     if (!concat_string_with_hex_buf(request.params, p_pck_cert_id->p_qe3_id, p_pck_cert_id->qe3_id_size)) {
+        qcnl_log(SGX_QL_LOG_ERROR, "[QCNL] build_pckcert_options failed while appending qeid\n");
+        QCNL_VERBOSE_DEBUG("[qcnl-debug] build_pckcert_options failed while appending qeid\n");
+        fflush(stderr);
         return ret;
     }
 
@@ -199,10 +259,16 @@ sgx_qcnl_error_t CertificationService::build_pckcert_options(Request &request, c
     if (p_pck_cert_id->p_encrypted_ppid == NULL) {
         uint8_t enc_ppid_unused[consts::ENC_PPID_SIZE] = {0};
         if (!concat_string_with_hex_buf(request.params, (const uint8_t *)&enc_ppid_unused, sizeof(enc_ppid_unused))) {
+            qcnl_log(SGX_QL_LOG_ERROR, "[QCNL] build_pckcert_options failed while appending zero encrypted_ppid\n");
+            QCNL_VERBOSE_DEBUG("[qcnl-debug] build_pckcert_options failed while appending zero encrypted_ppid\n");
+            fflush(stderr);
             return ret;
         }
     } else {
         if (!concat_string_with_hex_buf(request.params, p_pck_cert_id->p_encrypted_ppid, p_pck_cert_id->encrypted_ppid_size)) {
+            qcnl_log(SGX_QL_LOG_ERROR, "[QCNL] build_pckcert_options failed while appending encrypted_ppid\n");
+            QCNL_VERBOSE_DEBUG("[qcnl-debug] build_pckcert_options failed while appending encrypted_ppid\n");
+            fflush(stderr);
             return ret;
         }
     }
@@ -210,18 +276,27 @@ sgx_qcnl_error_t CertificationService::build_pckcert_options(Request &request, c
     // Append cpusvn
     request.params.append("&cpusvn=");
     if (!concat_string_with_hex_buf(request.params, reinterpret_cast<const uint8_t *>(p_pck_cert_id->p_platform_cpu_svn), sizeof(sgx_cpu_svn_t))) {
+        qcnl_log(SGX_QL_LOG_ERROR, "[QCNL] build_pckcert_options failed while appending cpusvn\n");
+        QCNL_VERBOSE_DEBUG("[qcnl-debug] build_pckcert_options failed while appending cpusvn\n");
+        fflush(stderr);
         return ret;
     }
 
     // Append pcesvn
     request.params.append("&pcesvn=");
     if (!concat_string_with_hex_buf(request.params, reinterpret_cast<const uint8_t *>(p_pck_cert_id->p_platform_pce_isv_svn), sizeof(sgx_isv_svn_t))) {
+        qcnl_log(SGX_QL_LOG_ERROR, "[QCNL] build_pckcert_options failed while appending pcesvn\n");
+        QCNL_VERBOSE_DEBUG("[qcnl-debug] build_pckcert_options failed while appending pcesvn\n");
+        fflush(stderr);
         return ret;
     }
 
     // Append pceid
     request.params.append("&pceid=");
     if (!concat_string_with_hex_buf(request.params, reinterpret_cast<const uint8_t *>(&p_pck_cert_id->pce_id), sizeof(p_pck_cert_id->pce_id))) {
+        qcnl_log(SGX_QL_LOG_ERROR, "[QCNL] build_pckcert_options failed while appending pceid\n");
+        QCNL_VERBOSE_DEBUG("[qcnl-debug] build_pckcert_options failed while appending pceid\n");
+        fflush(stderr);
         return ret;
     }
 
@@ -250,6 +325,8 @@ sgx_qcnl_error_t CertificationService::build_pckcert_options(Request &request, c
         }
     }
 
+    qcnl_log(SGX_QL_LOG_INFO, "[QCNL] build_pckcert_options params='%s'\n", request.params.c_str());
+    QCNL_VERBOSE_DEBUG("[qcnl-debug] build_pckcert_options params='%s'\n", request.params.c_str());
     return SGX_QCNL_SUCCESS;
 }
 
@@ -592,6 +669,8 @@ sgx_qcnl_error_t CertificationService::get_pck_cert_chain(const sgx_ql_pck_cert_
 
     // build query options for getting pck certificate
     if ((ret = build_pckcert_options(request, p_pck_cert_id)) != SGX_QCNL_SUCCESS) {
+        qcnl_log(SGX_QL_LOG_ERROR, "[QCNL] build_pckcert_options ret=0x%04x\n", ret);
+        QCNL_VERBOSE_DEBUG("[qcnl-debug] build_pckcert_options ret=0x%04x\n", ret);
         return ret;
     }
 
@@ -604,10 +683,20 @@ sgx_qcnl_error_t CertificationService::get_pck_cert_chain(const sgx_ql_pck_cert_
                  QcnlConfig::Instance()->getLocalPckUrl().c_str());
         return resp_obj_to_pck_certchain(&pccs_resp_obj, args);
     }
+    qcnl_log(SGX_QL_LOG_INFO,
+             "[QCNL] local provider ret=0x%04x primary_url='%s'\n",
+             ret,
+             QcnlConfig::Instance()->getLocalPckUrl().c_str());
+    QCNL_VERBOSE_DEBUG("[qcnl-debug] local provider ret=0x%04x primary_url='%s'\n",
+                       ret,
+                       QcnlConfig::Instance()->getLocalPckUrl().c_str());
 
     HandlerData handlerData = {resp_obj_to_pck_certchain, args};
 
-    return fetch_data(PCK_CERT_CHAIN, request, &handlerData);
+    ret = fetch_data(PCK_CERT_CHAIN, request, &handlerData);
+    qcnl_log(SGX_QL_LOG_INFO, "[QCNL] fetch_data(PCK_CERT_CHAIN) ret=0x%04x\n", ret);
+    QCNL_VERBOSE_DEBUG("[qcnl-debug] fetch_data(PCK_CERT_CHAIN) ret=0x%04x\n", ret);
+    return ret;
 }
 
 sgx_qcnl_error_t CertificationService::get_pck_crl_chain(const char *ca,

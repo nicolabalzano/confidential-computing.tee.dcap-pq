@@ -163,12 +163,15 @@ static bool is_verify_report2_available() {
 static bool is_supported_att_key_algorithm(uint32_t algorithm_id)
 {
     return algorithm_id == SGX_QL_ALG_ECDSA_P256 ||
-           algorithm_id == SGX_QL_ALG_MLDSA_65;
+           algorithm_id == SGX_QL_ALG_MLDSA_65 ||
+           algorithm_id == SGX_QL_ALG_MLDSA_87;
 }
 
 static uint32_t get_quote_sig_data_struct_size(uint32_t algorithm_id)
 {
     switch (algorithm_id) {
+    case SGX_QL_ALG_MLDSA_87:
+        return (uint32_t)sizeof(sgx_mldsa_87_sig_data_v4_t);
     case SGX_QL_ALG_MLDSA_65:
         return (uint32_t)sizeof(sgx_mldsa_65_sig_data_v4_t);
     case SGX_QL_ALG_ECDSA_P256:
@@ -180,6 +183,8 @@ static uint32_t get_quote_sig_data_struct_size(uint32_t algorithm_id)
 static uint32_t get_quote_signature_size(uint32_t algorithm_id)
 {
     switch (algorithm_id) {
+    case SGX_QL_ALG_MLDSA_87:
+        return SGX_QL_MLDSA_87_SIG_SIZE;
     case SGX_QL_ALG_MLDSA_65:
         return SGX_QL_MLDSA_65_SIG_SIZE;
     case SGX_QL_ALG_ECDSA_P256:
@@ -191,6 +196,8 @@ static uint32_t get_quote_signature_size(uint32_t algorithm_id)
 static uint32_t get_tdqe_blob_size_for_algorithm(uint32_t algorithm_id)
 {
     switch (algorithm_id) {
+    case SGX_QL_ALG_MLDSA_87:
+        return SGX_QL_TRUSTED_MLDSA_87_BLOB_SIZE_SDK;
     case SGX_QL_ALG_MLDSA_65:
         return SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK;
     case SGX_QL_ALG_ECDSA_P256:
@@ -298,7 +305,8 @@ ret_point:
     return ret;
 }
 
-static tdqe_error_t get_att_key_based_from_seal_key_mldsa(uint8_t *p_att_pub_key,
+static tdqe_error_t get_att_key_based_from_seal_key_mldsa(uint32_t algorithm_id,
+    uint8_t *p_att_pub_key,
     uint8_t *p_att_priv_key,
     const sgx_key_id_t *p_req_key_id)
 {
@@ -311,12 +319,15 @@ static tdqe_error_t get_att_key_based_from_seal_key_mldsa(uint8_t *p_att_pub_key
         return ret;
     }
 
-    set_tdqe_debug_stage(183, "gen_att_key mldsa helper: before tdqe_mldsa65_keygen");
-    if (0 != tdqe_mldsa65_keygen(p_att_pub_key, p_att_priv_key, att_seed)) {
+    set_tdqe_debug_stage(183, "gen_att_key mldsa helper: before tdqe_mldsa keygen");
+    if (((algorithm_id == SGX_QL_ALG_MLDSA_87) &&
+         (0 != tdqe_mldsa87_keygen(p_att_pub_key, p_att_priv_key, att_seed))) ||
+        ((algorithm_id != SGX_QL_ALG_MLDSA_87) &&
+         (0 != tdqe_mldsa65_keygen(p_att_pub_key, p_att_priv_key, att_seed)))) {
         (void)memset_s(att_seed, sizeof(att_seed), 0, sizeof(att_seed));
         return TDQE_ERROR_ATT_KEY_GEN;
     }
-    set_tdqe_debug_stage(184, "gen_att_key mldsa helper: after tdqe_mldsa65_keygen");
+    set_tdqe_debug_stage(184, "gen_att_key mldsa helper: after tdqe_mldsa keygen");
 
     (void)memset_s(att_seed, sizeof(att_seed), 0, sizeof(att_seed));
     return TDQE_SUCCESS;
@@ -329,6 +340,7 @@ static tdqe_error_t get_att_key_based_from_seal_key(sgx_ec256_private_t *p_att_p
 static tdqe_error_t gen_att_key_mldsa_impl(
     uint8_t *p_blob,
     uint32_t blob_size,
+    uint32_t algorithm_id,
     const sgx_target_info_t *p_pce_target_info,
     sgx_report_t *p_tdqe_report,
     uint8_t *p_authentication_data,
@@ -338,93 +350,115 @@ static tdqe_error_t gen_att_key_mldsa_impl(
     tdqe_error_t ret = TDQE_SUCCESS;
     sgx_status_t sgx_status = SGX_SUCCESS;
     sgx_report_data_t report_data = { 0 };
-    ref_plaintext_mldsa_65_data_sdk_t plaintext_data_mldsa;
-    ref_ciphertext_mldsa_65_data_sdk_t mldsa_ciphertext_data;
     sgx_key_id_t req_key_id = { 0 };
     sgx_sha_state_handle_t local_sha_handle = NULL;
     sgx_sha_state_handle_t *sha_handle = p_sha_handle ? p_sha_handle : &local_sha_handle;
+    if (algorithm_id == SGX_QL_ALG_MLDSA_87) {
+        ref_plaintext_mldsa_87_data_sdk_t plaintext_data_mldsa;
+        ref_ciphertext_mldsa_87_data_sdk_t mldsa_ciphertext_data;
 
-    memset(&plaintext_data_mldsa, 0, sizeof(plaintext_data_mldsa));
-    memset(&mldsa_ciphertext_data, 0, sizeof(mldsa_ciphertext_data));
-
-    set_tdqe_debug_stage(190, "gen_att_key mldsa: branch selected");
-    plaintext_data_mldsa.authentication_data_size = authentication_data_size;
-    if (p_authentication_data) {
-        set_tdqe_debug_stage(191, "gen_att_key mldsa: before authdata copy");
-        sgx_lfence();
-        memcpy(plaintext_data_mldsa.authentication_data, p_authentication_data, sizeof(plaintext_data_mldsa.authentication_data));
-        set_tdqe_debug_stage(192, "gen_att_key mldsa: after authdata copy");
-    }
-
-    set_tdqe_debug_stage(200, "gen_att_key mldsa: before key derivation");
-    ret = get_att_key_based_from_seal_key_mldsa(
-        plaintext_data_mldsa.mldsa_att_public_key,
-        mldsa_ciphertext_data.mldsa_private_key,
-        &req_key_id);
-    set_tdqe_debug_stage(201, "gen_att_key mldsa: after key derivation");
-    if (TDQE_SUCCESS != ret) {
-        goto ret_point;
-    }
-
-    do {
-        set_tdqe_debug_stage(210, "gen_att_key mldsa: before sha256_init");
-        sgx_status = sgx_sha256_init(sha_handle);
-        if (SGX_SUCCESS != sgx_status) {
-            break;
+        memset(&plaintext_data_mldsa, 0, sizeof(plaintext_data_mldsa));
+        memset(&mldsa_ciphertext_data, 0, sizeof(mldsa_ciphertext_data));
+        plaintext_data_mldsa.authentication_data_size = authentication_data_size;
+        if (p_authentication_data) {
+            sgx_lfence();
+            memcpy(plaintext_data_mldsa.authentication_data, p_authentication_data, sizeof(plaintext_data_mldsa.authentication_data));
         }
-
-            set_tdqe_debug_stage(211, "gen_att_key mldsa: before sha256 pubkey update");
+        ret = get_att_key_based_from_seal_key_mldsa(algorithm_id,
+            plaintext_data_mldsa.mldsa_att_public_key,
+            mldsa_ciphertext_data.mldsa_private_key,
+            &req_key_id);
+        if (TDQE_SUCCESS != ret) {
+            goto ret_point;
+        }
+        do {
+            sgx_status = sgx_sha256_init(sha_handle);
+            if (SGX_SUCCESS != sgx_status) { break; }
             sgx_status = sgx_sha256_update((uint8_t*)plaintext_data_mldsa.mldsa_att_public_key,
-                sizeof(plaintext_data_mldsa.mldsa_att_public_key),
-                *sha_handle);
-        if (SGX_SUCCESS != sgx_status) {
-            break;
-        }
-
-            set_tdqe_debug_stage(212, "gen_att_key mldsa: before sha256 authdata update");
+                sizeof(plaintext_data_mldsa.mldsa_att_public_key), *sha_handle);
+            if (SGX_SUCCESS != sgx_status) { break; }
             sgx_status = sgx_sha256_update((uint8_t*)plaintext_data_mldsa.authentication_data,
-                sizeof(plaintext_data_mldsa.authentication_data),
-                *sha_handle);
-        if (SGX_SUCCESS != sgx_status) {
-            break;
-        }
-
-            set_tdqe_debug_stage(213, "gen_att_key mldsa: before sha256 get hash");
+                sizeof(plaintext_data_mldsa.authentication_data), *sha_handle);
+            if (SGX_SUCCESS != sgx_status) { break; }
             sgx_status = sgx_sha256_get_hash(*sha_handle, &plaintext_data_mldsa.mldsa_id);
+            if (SGX_SUCCESS != sgx_status) { break; }
+        } while (0);
         if (SGX_SUCCESS != sgx_status) {
-            break;
+            ret = TDQE_ERROR_UNEXPECTED;
+            goto ret_point;
         }
-    } while (0);
-    set_tdqe_debug_stage(214, "gen_att_key mldsa: after sha256 sequence");
-    if (SGX_SUCCESS != sgx_status) {
-        ret = TDQE_ERROR_UNEXPECTED;
-        goto ret_point;
-    }
+        memcpy(&report_data, &plaintext_data_mldsa.mldsa_id, sizeof(plaintext_data_mldsa.mldsa_id));
+        sgx_status = sgx_create_report(p_pce_target_info, &report_data, p_tdqe_report);
+        if (SGX_SUCCESS != sgx_status) {
+            ret = (SGX_ERROR_OUT_OF_MEMORY == sgx_status) ? TDQE_ERROR_OUT_OF_MEMORY : TDQE_ERROR_UNEXPECTED;
+            goto ret_point;
+        }
+        plaintext_data_mldsa.seal_blob_type = SGX_QL_SEAL_MLDSA_87_KEY_BLOB;
+        plaintext_data_mldsa.mldsa_key_version = SGX_QL_MLDSA_87_KEY_BLOB_VERSION_0;
+        sgx_status = sgx_seal_data(sizeof(plaintext_data_mldsa),
+            reinterpret_cast<uint8_t*>(&plaintext_data_mldsa),
+            sizeof(mldsa_ciphertext_data),
+            reinterpret_cast<uint8_t*>(&mldsa_ciphertext_data),
+            blob_size,
+            (sgx_sealed_data_t*)p_blob);
+        memset_s(&mldsa_ciphertext_data, sizeof(mldsa_ciphertext_data), 0, sizeof(mldsa_ciphertext_data));
+        if (SGX_SUCCESS != sgx_status) {
+            ret = TDQE_ERROR_UNEXPECTED;
+            goto ret_point;
+        }
+    } else {
+        ref_plaintext_mldsa_65_data_sdk_t plaintext_data_mldsa;
+        ref_ciphertext_mldsa_65_data_sdk_t mldsa_ciphertext_data;
 
-    ref_static_assert(sizeof(plaintext_data_mldsa.mldsa_id) <= sizeof(report_data));
-    memcpy(&report_data, &plaintext_data_mldsa.mldsa_id, sizeof(plaintext_data_mldsa.mldsa_id));
-
-    set_tdqe_debug_stage(220, "gen_att_key mldsa: before sgx_create_report");
-    sgx_status = sgx_create_report(p_pce_target_info, &report_data, p_tdqe_report);
-    set_tdqe_debug_stage(221, "gen_att_key mldsa: after sgx_create_report");
-    if (SGX_SUCCESS != sgx_status) {
-        ret = (SGX_ERROR_OUT_OF_MEMORY == sgx_status) ? TDQE_ERROR_OUT_OF_MEMORY : TDQE_ERROR_UNEXPECTED;
-        goto ret_point;
-    }
-
-    plaintext_data_mldsa.seal_blob_type = SGX_QL_SEAL_MLDSA_65_KEY_BLOB;
-    plaintext_data_mldsa.mldsa_key_version = SGX_QL_MLDSA_65_KEY_BLOB_VERSION_0;
-    set_tdqe_debug_stage(230, "gen_att_key mldsa: before sgx_seal_data");
-    sgx_status = sgx_seal_data(sizeof(plaintext_data_mldsa),
-        reinterpret_cast<uint8_t*>(&plaintext_data_mldsa),
-        sizeof(mldsa_ciphertext_data),
-        reinterpret_cast<uint8_t*>(&mldsa_ciphertext_data),
-        blob_size,
-        (sgx_sealed_data_t*)p_blob);
-    set_tdqe_debug_stage(231, "gen_att_key mldsa: after sgx_seal_data");
-    if (SGX_SUCCESS != sgx_status) {
-        ret = TDQE_ERROR_UNEXPECTED;
-        goto ret_point;
+        memset(&plaintext_data_mldsa, 0, sizeof(plaintext_data_mldsa));
+        memset(&mldsa_ciphertext_data, 0, sizeof(mldsa_ciphertext_data));
+        plaintext_data_mldsa.authentication_data_size = authentication_data_size;
+        if (p_authentication_data) {
+            sgx_lfence();
+            memcpy(plaintext_data_mldsa.authentication_data, p_authentication_data, sizeof(plaintext_data_mldsa.authentication_data));
+        }
+        ret = get_att_key_based_from_seal_key_mldsa(algorithm_id,
+            plaintext_data_mldsa.mldsa_att_public_key,
+            mldsa_ciphertext_data.mldsa_private_key,
+            &req_key_id);
+        if (TDQE_SUCCESS != ret) {
+            goto ret_point;
+        }
+        do {
+            sgx_status = sgx_sha256_init(sha_handle);
+            if (SGX_SUCCESS != sgx_status) { break; }
+            sgx_status = sgx_sha256_update((uint8_t*)plaintext_data_mldsa.mldsa_att_public_key,
+                sizeof(plaintext_data_mldsa.mldsa_att_public_key), *sha_handle);
+            if (SGX_SUCCESS != sgx_status) { break; }
+            sgx_status = sgx_sha256_update((uint8_t*)plaintext_data_mldsa.authentication_data,
+                sizeof(plaintext_data_mldsa.authentication_data), *sha_handle);
+            if (SGX_SUCCESS != sgx_status) { break; }
+            sgx_status = sgx_sha256_get_hash(*sha_handle, &plaintext_data_mldsa.mldsa_id);
+            if (SGX_SUCCESS != sgx_status) { break; }
+        } while (0);
+        if (SGX_SUCCESS != sgx_status) {
+            ret = TDQE_ERROR_UNEXPECTED;
+            goto ret_point;
+        }
+        memcpy(&report_data, &plaintext_data_mldsa.mldsa_id, sizeof(plaintext_data_mldsa.mldsa_id));
+        sgx_status = sgx_create_report(p_pce_target_info, &report_data, p_tdqe_report);
+        if (SGX_SUCCESS != sgx_status) {
+            ret = (SGX_ERROR_OUT_OF_MEMORY == sgx_status) ? TDQE_ERROR_OUT_OF_MEMORY : TDQE_ERROR_UNEXPECTED;
+            goto ret_point;
+        }
+        plaintext_data_mldsa.seal_blob_type = SGX_QL_SEAL_MLDSA_65_KEY_BLOB;
+        plaintext_data_mldsa.mldsa_key_version = SGX_QL_MLDSA_65_KEY_BLOB_VERSION_0;
+        sgx_status = sgx_seal_data(sizeof(plaintext_data_mldsa),
+            reinterpret_cast<uint8_t*>(&plaintext_data_mldsa),
+            sizeof(mldsa_ciphertext_data),
+            reinterpret_cast<uint8_t*>(&mldsa_ciphertext_data),
+            blob_size,
+            (sgx_sealed_data_t*)p_blob);
+        memset_s(&mldsa_ciphertext_data, sizeof(mldsa_ciphertext_data), 0, sizeof(mldsa_ciphertext_data));
+        if (SGX_SUCCESS != sgx_status) {
+            ret = TDQE_ERROR_UNEXPECTED;
+            goto ret_point;
+        }
     }
 
 ret_point:
@@ -432,7 +466,6 @@ ret_point:
         sgx_sha256_close(*sha_handle);
         *sha_handle = NULL;
     }
-    memset_s(&mldsa_ciphertext_data, sizeof(mldsa_ciphertext_data), 0, sizeof(mldsa_ciphertext_data));
     return ret;
 }
 
@@ -905,17 +938,18 @@ static tdqe_error_t verify_blob_any_internal(uint8_t *p_blob,
     uint32_t decryptedtext_length = 0;
     sgx_sealed_data_t *p_sealed_blob = reinterpret_cast<sgx_sealed_data_t *>(p_blob);
     uint8_t local_blob[SGX_QL_TRUSTED_MAX_BLOB_SIZE_SDK] = { 0 };
-    uint8_t plaintext_buf[sizeof(ref_plaintext_mldsa_65_data_sdk_t)] = { 0 };
-    uint8_t ciphertext_buf[sizeof(ref_ciphertext_mldsa_65_data_sdk_t)] = { 0 };
+    uint8_t plaintext_buf[sizeof(ref_plaintext_mldsa_87_data_sdk_t)] = { 0 };
+    uint8_t ciphertext_buf[sizeof(ref_ciphertext_mldsa_87_data_sdk_t)] = { 0 };
     sgx_report_t report;
-    const ref_plaintext_mldsa_65_data_sdk_t *p_plaintext_common = reinterpret_cast<const ref_plaintext_mldsa_65_data_sdk_t *>(plaintext_buf);
+    const uint8_t *p_plaintext_common = plaintext_buf;
 
     if ((NULL == p_blob) || (NULL == p_is_resealed)) {
         return TDQE_ERROR_INVALID_PARAMETER;
     }
 
     if ((blob_size != SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK) &&
-        (blob_size != SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK)) {
+        (blob_size != SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK) &&
+        (blob_size != SGX_QL_TRUSTED_MLDSA_87_BLOB_SIZE_SDK)) {
         return TDQE_ECDSABLOB_ERROR;
     }
 
@@ -939,7 +973,7 @@ static tdqe_error_t verify_blob_any_internal(uint8_t *p_blob,
     }
 
     if (plaintext_length >= sizeof(ref_plaintext_ecdsa_data_sdk_t) &&
-        p_plaintext_common->seal_blob_type == SGX_QL_SEAL_ECDSA_KEY_BLOB) {
+        *p_plaintext_common == SGX_QL_SEAL_ECDSA_KEY_BLOB) {
         const ref_plaintext_ecdsa_data_sdk_t *p_plaintext_ecdsa = reinterpret_cast<const ref_plaintext_ecdsa_data_sdk_t *>(plaintext_buf);
 
         if ((blob_size != SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK) ||
@@ -954,13 +988,28 @@ static tdqe_error_t verify_blob_any_internal(uint8_t *p_blob,
             memcpy(p_pub_key_id, &p_plaintext_ecdsa->ecdsa_id, sizeof(p_plaintext_ecdsa->ecdsa_id));
         }
     } else if (plaintext_length >= sizeof(ref_plaintext_mldsa_65_data_sdk_t) &&
-               p_plaintext_common->seal_blob_type == SGX_QL_SEAL_MLDSA_65_KEY_BLOB) {
+               *p_plaintext_common == SGX_QL_SEAL_MLDSA_65_KEY_BLOB) {
         const ref_plaintext_mldsa_65_data_sdk_t *p_plaintext_mldsa = reinterpret_cast<const ref_plaintext_mldsa_65_data_sdk_t *>(plaintext_buf);
 
         if ((blob_size != SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK) ||
             (decryptedtext_length != sizeof(ref_ciphertext_mldsa_65_data_sdk_t)) ||
             (plaintext_length != sizeof(ref_plaintext_mldsa_65_data_sdk_t)) ||
             (p_plaintext_mldsa->mldsa_key_version != SGX_QL_MLDSA_65_KEY_BLOB_VERSION_0)) {
+            ret = TDQE_ECDSABLOB_ERROR;
+            goto ret_point;
+        }
+
+        if (NULL != p_pub_key_id) {
+            memcpy(p_pub_key_id, &p_plaintext_mldsa->mldsa_id, sizeof(p_plaintext_mldsa->mldsa_id));
+        }
+    } else if (plaintext_length >= sizeof(ref_plaintext_mldsa_87_data_sdk_t) &&
+               *p_plaintext_common == SGX_QL_SEAL_MLDSA_87_KEY_BLOB) {
+        const ref_plaintext_mldsa_87_data_sdk_t *p_plaintext_mldsa = reinterpret_cast<const ref_plaintext_mldsa_87_data_sdk_t *>(plaintext_buf);
+
+        if ((blob_size != SGX_QL_TRUSTED_MLDSA_87_BLOB_SIZE_SDK) ||
+            (decryptedtext_length != sizeof(ref_ciphertext_mldsa_87_data_sdk_t)) ||
+            (plaintext_length != sizeof(ref_plaintext_mldsa_87_data_sdk_t)) ||
+            (p_plaintext_mldsa->mldsa_key_version != SGX_QL_MLDSA_87_KEY_BLOB_VERSION_0)) {
             ret = TDQE_ECDSABLOB_ERROR;
             goto ret_point;
         }
@@ -1016,7 +1065,9 @@ static tdqe_error_t verify_blob_data_any_internal(uint8_t *p_blob,
     ref_plaintext_ecdsa_data_sdk_t *p_plaintext_ecdsa,
     ref_ciphertext_ecdsa_data_sdk_t *p_secret_ecdsa_data,
     ref_plaintext_mldsa_65_data_sdk_t *p_plaintext_mldsa,
-    ref_ciphertext_mldsa_65_data_sdk_t *p_secret_mldsa_data)
+    ref_ciphertext_mldsa_65_data_sdk_t *p_secret_mldsa_data,
+    ref_plaintext_mldsa_87_data_sdk_t *p_plaintext_mldsa87,
+    ref_ciphertext_mldsa_87_data_sdk_t *p_secret_mldsa_data87)
 {
     sgx_status_t sgx_status = SGX_SUCCESS;
     tdqe_error_t ret = TDQE_SUCCESS;
@@ -1065,7 +1116,7 @@ static tdqe_error_t verify_blob_data_any_internal(uint8_t *p_blob,
             ret = TDQE_ECDSABLOB_ERROR;
             goto ret_point;
         }
-    } else {
+    } else if (algorithm_id == SGX_QL_ALG_MLDSA_65) {
         if ((NULL == p_plaintext_mldsa) || (NULL == p_secret_mldsa_data) ||
             (plaintext_length != sizeof(*p_plaintext_mldsa)) ||
             (decryptedtext_length != sizeof(*p_secret_mldsa_data))) {
@@ -1090,6 +1141,31 @@ static tdqe_error_t verify_blob_data_any_internal(uint8_t *p_blob,
             ret = TDQE_ECDSABLOB_ERROR;
             goto ret_point;
         }
+    } else {
+        if ((NULL == p_plaintext_mldsa87) || (NULL == p_secret_mldsa_data87) ||
+            (plaintext_length != sizeof(*p_plaintext_mldsa87)) ||
+            (decryptedtext_length != sizeof(*p_secret_mldsa_data87))) {
+            return TDQE_ECDSABLOB_ERROR;
+        }
+
+        memset(p_plaintext_mldsa87, 0, sizeof(*p_plaintext_mldsa87));
+        memset(p_secret_mldsa_data87, 0, sizeof(*p_secret_mldsa_data87));
+        set_tdqe_debug_stage(122, "verify_blob_any: before mldsa87 unseal");
+        sgx_status = sgx_unseal_data(p_sealed_blob,
+            reinterpret_cast<uint8_t *>(p_plaintext_mldsa87),
+            &plaintext_length,
+            reinterpret_cast<uint8_t *>(p_secret_mldsa_data87),
+            &decryptedtext_length);
+        set_tdqe_debug_stage(123, "verify_blob_any: after mldsa87 unseal");
+        if (SGX_SUCCESS != sgx_status) {
+            return TDQE_ECDSABLOB_ERROR;
+        }
+
+        if ((p_plaintext_mldsa87->seal_blob_type != SGX_QL_SEAL_MLDSA_87_KEY_BLOB) ||
+            (p_plaintext_mldsa87->mldsa_key_version != SGX_QL_MLDSA_87_KEY_BLOB_VERSION_0)) {
+            ret = TDQE_ECDSABLOB_ERROR;
+            goto ret_point;
+        }
     }
 
     memset(&report, 0, sizeof(report));
@@ -1110,11 +1186,18 @@ static tdqe_error_t verify_blob_data_any_internal(uint8_t *p_blob,
                 reinterpret_cast<uint8_t *>(p_secret_ecdsa_data),
                 blob_size,
                 reinterpret_cast<sgx_sealed_data_t *>(local_blob));
-        } else {
+        } else if (algorithm_id == SGX_QL_ALG_MLDSA_65) {
             sgx_status = sgx_seal_data(sizeof(*p_plaintext_mldsa),
                 reinterpret_cast<uint8_t *>(p_plaintext_mldsa),
                 sizeof(*p_secret_mldsa_data),
                 reinterpret_cast<uint8_t *>(p_secret_mldsa_data),
+                blob_size,
+                reinterpret_cast<sgx_sealed_data_t *>(local_blob));
+        } else {
+            sgx_status = sgx_seal_data(sizeof(*p_plaintext_mldsa87),
+                reinterpret_cast<uint8_t *>(p_plaintext_mldsa87),
+                sizeof(*p_secret_mldsa_data87),
+                reinterpret_cast<uint8_t *>(p_secret_mldsa_data87),
                 blob_size,
                 reinterpret_cast<sgx_sealed_data_t *>(local_blob));
         }
@@ -1177,7 +1260,8 @@ uint32_t verify_blob(uint8_t *p_blob,
     }
 
     if ((SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK != blob_size) &&
-        (SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK != blob_size)) {
+        (SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK != blob_size) &&
+        (SGX_QL_TRUSTED_MLDSA_87_BLOB_SIZE_SDK != blob_size)) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
 
@@ -1504,6 +1588,7 @@ static uint32_t gen_att_key_impl(uint8_t *p_blob,
         return gen_att_key_mldsa_impl(
             p_blob,
             blob_size,
+            algorithm_id,
             p_pce_target_info,
             p_tdqe_report,
             p_authentication_data,
@@ -1580,6 +1665,9 @@ uint32_t store_cert_data(uint8_t *p_plaintext_data,
     ref_plaintext_mldsa_65_data_sdk_t input_plaintext_mldsa;
     ref_plaintext_mldsa_65_data_sdk_t local_plaintext_data_mldsa;
     ref_ciphertext_mldsa_65_data_sdk_t ciphertext_data_mldsa;
+    ref_plaintext_mldsa_87_data_sdk_t input_plaintext_mldsa87;
+    ref_plaintext_mldsa_87_data_sdk_t local_plaintext_data_mldsa87;
+    ref_ciphertext_mldsa_87_data_sdk_t ciphertext_data_mldsa87;
     uint8_t is_resealed;
     uint32_t algorithm_id = 0;
     sgx_report_t report;
@@ -1612,7 +1700,8 @@ uint32_t store_cert_data(uint8_t *p_plaintext_data,
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
     if ((blob_size != SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK) &&
-        (blob_size != SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK)) {
+        (blob_size != SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK) &&
+        (blob_size != SGX_QL_TRUSTED_MLDSA_87_BLOB_SIZE_SDK)) {
         return(TDQE_ERROR_INVALID_PARAMETER);
     }
     /* Check whether p_blob is copied into EPC. If we want to reduce the
@@ -1642,6 +1731,9 @@ uint32_t store_cert_data(uint8_t *p_plaintext_data,
     memset(&input_plaintext_mldsa, 0, sizeof(input_plaintext_mldsa));
     memset(&local_plaintext_data_mldsa, 0, sizeof(local_plaintext_data_mldsa));
     memset(&ciphertext_data_mldsa, 0, sizeof(ciphertext_data_mldsa));
+    memset(&input_plaintext_mldsa87, 0, sizeof(input_plaintext_mldsa87));
+    memset(&local_plaintext_data_mldsa87, 0, sizeof(local_plaintext_data_mldsa87));
+    memset(&ciphertext_data_mldsa87, 0, sizeof(ciphertext_data_mldsa87));
 
     if (blob_size == SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK) {
         algorithm_id = SGX_QL_ALG_ECDSA_P256;
@@ -1649,12 +1741,18 @@ uint32_t store_cert_data(uint8_t *p_plaintext_data,
             return(TDQE_ERROR_INVALID_PARAMETER);
         }
         memcpy(&input_plaintext_ecdsa, p_plaintext_data, sizeof(input_plaintext_ecdsa));
-    } else {
+    } else if (blob_size == SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK) {
         algorithm_id = SGX_QL_ALG_MLDSA_65;
         if (plaintext_data_size != sizeof(input_plaintext_mldsa)) {
             return(TDQE_ERROR_INVALID_PARAMETER);
         }
         memcpy(&input_plaintext_mldsa, p_plaintext_data, sizeof(input_plaintext_mldsa));
+    } else {
+        algorithm_id = SGX_QL_ALG_MLDSA_87;
+        if (plaintext_data_size != sizeof(input_plaintext_mldsa87)) {
+            return(TDQE_ERROR_INVALID_PARAMETER);
+        }
+        memcpy(&input_plaintext_mldsa87, p_plaintext_data, sizeof(input_plaintext_mldsa87));
     }
 
     ret = random_stack_advance(verify_blob_data_any_internal,p_blob,
@@ -1664,7 +1762,9 @@ uint32_t store_cert_data(uint8_t *p_plaintext_data,
         &local_plaintext_data,
         pciphertext_data,
         &local_plaintext_data_mldsa,
-        &ciphertext_data_mldsa);
+        &ciphertext_data_mldsa,
+        &local_plaintext_data_mldsa87,
+        &ciphertext_data_mldsa87);
     if (TDQE_SUCCESS != ret) {
         goto ret_point;
     }
@@ -1676,10 +1776,17 @@ uint32_t store_cert_data(uint8_t *p_plaintext_data,
             ret = TDQE_ERROR_INVALID_PARAMETER;
             goto ret_point;
         }
-    } else {
+    } else if (algorithm_id == SGX_QL_ALG_MLDSA_65) {
         if (0 != memcmp(&local_plaintext_data_mldsa.mldsa_id,
                 &input_plaintext_mldsa.qe_report.body.report_data,
                 sizeof(local_plaintext_data_mldsa.mldsa_id))) {
+            ret = TDQE_ERROR_INVALID_PARAMETER;
+            goto ret_point;
+        }
+    } else {
+        if (0 != memcmp(&local_plaintext_data_mldsa87.mldsa_id,
+                &input_plaintext_mldsa87.qe_report.body.report_data,
+                sizeof(local_plaintext_data_mldsa87.mldsa_id))) {
             ret = TDQE_ERROR_INVALID_PARAMETER;
             goto ret_point;
         }
@@ -1724,7 +1831,7 @@ uint32_t store_cert_data(uint8_t *p_plaintext_data,
             reinterpret_cast<uint8_t*>(pciphertext_data),
             blob_size,
             (sgx_sealed_data_t*)p_blob);
-    } else {
+    } else if (algorithm_id == SGX_QL_ALG_MLDSA_65) {
         memcpy(&local_plaintext_data_mldsa.seal_cpu_svn, &report.body.cpu_svn, sizeof(local_plaintext_data_mldsa.seal_cpu_svn));
         local_plaintext_data_mldsa.seal_qe_isv_svn = report.body.isv_svn;
         if (NULL != p_encrypted_ppid) {
@@ -1751,6 +1858,33 @@ uint32_t store_cert_data(uint8_t *p_plaintext_data,
             reinterpret_cast<uint8_t*>(&ciphertext_data_mldsa),
             blob_size,
             (sgx_sealed_data_t*)p_blob);
+    } else {
+        memcpy(&local_plaintext_data_mldsa87.seal_cpu_svn, &report.body.cpu_svn, sizeof(local_plaintext_data_mldsa87.seal_cpu_svn));
+        local_plaintext_data_mldsa87.seal_qe_isv_svn = report.body.isv_svn;
+        if (NULL != p_encrypted_ppid) {
+            ciphertext_data_mldsa87.is_clear_ppid = 0;
+            ciphertext_data_mldsa87.encrypted_ppid_data.crypto_suite = PCE_ALG_RSA_OAEP_3072;
+            ciphertext_data_mldsa87.encrypted_ppid_data.encrypted_ppid_buf_size = encrypted_ppid_size;
+            memcpy(ciphertext_data_mldsa87.encrypted_ppid_data.encrypted_ppid, p_encrypted_ppid, encrypted_ppid_size);
+        }
+        local_plaintext_data_mldsa87.cert_qe_isv_svn = report.body.isv_svn;
+        memcpy(&local_plaintext_data_mldsa87.cert_cpu_svn, &input_plaintext_mldsa87.cert_cpu_svn, sizeof(local_plaintext_data_mldsa87.cert_cpu_svn));
+        local_plaintext_data_mldsa87.cert_pce_info = input_plaintext_mldsa87.cert_pce_info;
+        local_plaintext_data_mldsa87.signature_scheme = input_plaintext_mldsa87.signature_scheme;
+        memcpy(&local_plaintext_data_mldsa87.qe_report, &input_plaintext_mldsa87.qe_report, sizeof(local_plaintext_data_mldsa87.qe_report));
+        memcpy(&local_plaintext_data_mldsa87.qe_report_cert_key_sig, &input_plaintext_mldsa87.qe_report_cert_key_sig, sizeof(local_plaintext_data_mldsa87.qe_report_cert_key_sig));
+        local_plaintext_data_mldsa87.certification_key_type = input_plaintext_mldsa87.certification_key_type;
+        memcpy_s(&local_plaintext_data_mldsa87.pce_target_info, sizeof(local_plaintext_data_mldsa87.pce_target_info), &input_plaintext_mldsa87.pce_target_info, sizeof(input_plaintext_mldsa87.pce_target_info));
+        memcpy_s(&local_plaintext_data_mldsa87.raw_cpu_svn, sizeof(local_plaintext_data_mldsa87.raw_cpu_svn), &input_plaintext_mldsa87.raw_cpu_svn, sizeof(input_plaintext_mldsa87.raw_cpu_svn));
+        local_plaintext_data_mldsa87.raw_pce_info = input_plaintext_mldsa87.raw_pce_info;
+        memcpy_s(&local_plaintext_data_mldsa87.qe_id, sizeof(local_plaintext_data_mldsa87.qe_id), &input_plaintext_mldsa87.qe_id, sizeof(input_plaintext_mldsa87.qe_id));
+
+        sgx_status = sgx_seal_data(sizeof(local_plaintext_data_mldsa87),
+            reinterpret_cast<uint8_t*>(&local_plaintext_data_mldsa87),
+            sizeof(ciphertext_data_mldsa87),
+            reinterpret_cast<uint8_t*>(&ciphertext_data_mldsa87),
+            blob_size,
+            (sgx_sealed_data_t*)p_blob);
     }
     if (SGX_SUCCESS != sgx_status) {
         ret = TDQE_ERROR_UNEXPECTED;
@@ -1762,8 +1896,11 @@ ret_point:
     memset_s(&local_plaintext_data, sizeof(local_plaintext_data), 0, sizeof(local_plaintext_data));
     memset_s(&input_plaintext_mldsa, sizeof(input_plaintext_mldsa), 0, sizeof(input_plaintext_mldsa));
     memset_s(&local_plaintext_data_mldsa, sizeof(local_plaintext_data_mldsa), 0, sizeof(local_plaintext_data_mldsa));
+    memset_s(&input_plaintext_mldsa87, sizeof(input_plaintext_mldsa87), 0, sizeof(input_plaintext_mldsa87));
+    memset_s(&local_plaintext_data_mldsa87, sizeof(local_plaintext_data_mldsa87), 0, sizeof(local_plaintext_data_mldsa87));
     memset_s(pciphertext_data, sizeof(*pciphertext_data), 0, sizeof(*pciphertext_data));
     memset_s(&ciphertext_data_mldsa, sizeof(ciphertext_data_mldsa), 0, sizeof(ciphertext_data_mldsa));
+    memset_s(&ciphertext_data_mldsa87, sizeof(ciphertext_data_mldsa87), 0, sizeof(ciphertext_data_mldsa87));
     return(ret);
 }
 
@@ -2004,6 +2141,7 @@ uint32_t gen_quote(uint8_t *p_blob,
     size_t real_quote_size = 0;
     ref_plaintext_ecdsa_data_sdk_t plaintext;
     ref_plaintext_mldsa_65_data_sdk_t plaintext_mldsa;
+    ref_plaintext_mldsa_87_data_sdk_t plaintext_mldsa87;
     bool gen_v5_quote = false;
     bool mr_servicetd_valid = false;
     bool tee_tcb_svn2_valid = false;
@@ -2038,6 +2176,8 @@ uint32_t gen_quote(uint8_t *p_blob,
     ref_ciphertext_ecdsa_data_sdk_t* pciphertext = &ociphertext->v;
     ref_ciphertext_mldsa_65_data_sdk_t ciphertext_mldsa;
     ref_ciphertext_mldsa_65_data_sdk_t* pciphertext_mldsa = &ciphertext_mldsa;
+    ref_ciphertext_mldsa_87_data_sdk_t ciphertext_mldsa87;
+    ref_ciphertext_mldsa_87_data_sdk_t* pciphertext_mldsa87 = &ciphertext_mldsa87;
 
     sgx_sha384_hash_t hash384_buf = {0};
     sgx_ecc_state_handle_t handle = NULL;
@@ -2059,12 +2199,17 @@ uint32_t gen_quote(uint8_t *p_blob,
     const sgx_ec256_signature_t *p_blob_qe_report_sig = NULL;
     const sgx_pce_info_t *p_blob_cert_pce_info = NULL;
     const sgx_cpu_svn_t *p_blob_cert_cpu_svn = NULL;
+    const uint8_t *p_mldsa_private_key = NULL;
+    const uint8_t *p_mldsa_public_key = NULL;
+    size_t mldsa_public_key_size = 0;
     uint8_t blob_is_clear_ppid = 0;
     const ref_encrypted_ppid_t *p_blob_encrypted_ppid = NULL;
 
     memset(&plaintext, 0, sizeof(plaintext));
     memset(&plaintext_mldsa, 0, sizeof(plaintext_mldsa));
+    memset(&plaintext_mldsa87, 0, sizeof(plaintext_mldsa87));
     memset(pciphertext_mldsa, 0, sizeof(*pciphertext_mldsa));
+    memset(pciphertext_mldsa87, 0, sizeof(*pciphertext_mldsa87));
     set_tdqe_debug_stage(304, "gen_quote: local buffers zeroed");
 
     // Actually, some cases here will be checked with code generated by
@@ -2221,7 +2366,9 @@ uint32_t gen_quote(uint8_t *p_blob,
         &plaintext,
         pciphertext,
         &plaintext_mldsa,
-        pciphertext_mldsa);
+        pciphertext_mldsa,
+        &plaintext_mldsa87,
+        pciphertext_mldsa87);
     set_tdqe_debug_stage(322, "gen_quote: after verify_blob_data_any_internal");
     if (TDQE_SUCCESS != ret) {
         goto ret_point;
@@ -2237,7 +2384,7 @@ uint32_t gen_quote(uint8_t *p_blob,
         p_blob_cert_cpu_svn = &plaintext.cert_cpu_svn;
         blob_is_clear_ppid = pciphertext->is_clear_ppid;
         p_blob_encrypted_ppid = &pciphertext->encrypted_ppid_data;
-    } else {
+    } else if (algorithm_id == SGX_QL_ALG_MLDSA_65) {
         authentication_data_size = plaintext_mldsa.authentication_data_size;
         p_blob_authentication_data = plaintext_mldsa.authentication_data;
         p_blob_qe_id = &plaintext_mldsa.qe_id;
@@ -2247,6 +2394,22 @@ uint32_t gen_quote(uint8_t *p_blob,
         p_blob_cert_cpu_svn = &plaintext_mldsa.cert_cpu_svn;
         blob_is_clear_ppid = pciphertext_mldsa->is_clear_ppid;
         p_blob_encrypted_ppid = &pciphertext_mldsa->encrypted_ppid_data;
+        p_mldsa_private_key = pciphertext_mldsa->mldsa_private_key;
+        p_mldsa_public_key = plaintext_mldsa.mldsa_att_public_key;
+        mldsa_public_key_size = sizeof(plaintext_mldsa.mldsa_att_public_key);
+    } else {
+        authentication_data_size = plaintext_mldsa87.authentication_data_size;
+        p_blob_authentication_data = plaintext_mldsa87.authentication_data;
+        p_blob_qe_id = &plaintext_mldsa87.qe_id;
+        p_blob_qe_report = &plaintext_mldsa87.qe_report;
+        p_blob_qe_report_sig = &plaintext_mldsa87.qe_report_cert_key_sig;
+        p_blob_cert_pce_info = &plaintext_mldsa87.cert_pce_info;
+        p_blob_cert_cpu_svn = &plaintext_mldsa87.cert_cpu_svn;
+        blob_is_clear_ppid = pciphertext_mldsa87->is_clear_ppid;
+        p_blob_encrypted_ppid = &pciphertext_mldsa87->encrypted_ppid_data;
+        p_mldsa_private_key = pciphertext_mldsa87->mldsa_private_key;
+        p_mldsa_public_key = plaintext_mldsa87.mldsa_att_public_key;
+        mldsa_public_key_size = sizeof(plaintext_mldsa87.mldsa_att_public_key);
     }
     set_tdqe_debug_stage(323, "gen_quote: blob context selected");
 
@@ -2334,6 +2497,10 @@ uint32_t gen_quote(uint8_t *p_blob,
         p_quote_sig = (uint8_t *)(p_quote->signature_data);
     }
     switch (algorithm_id) {
+    case SGX_QL_ALG_MLDSA_87:
+        p_quote_sig_pub_key = reinterpret_cast<sgx_mldsa_87_sig_data_v4_t *>(p_quote_sig)->attest_pub_key;
+        p_quote_sig_certification_data = reinterpret_cast<sgx_mldsa_87_sig_data_v4_t *>(p_quote_sig)->certification_data;
+        break;
     case SGX_QL_ALG_MLDSA_65:
         p_quote_sig_pub_key = reinterpret_cast<sgx_mldsa_65_sig_data_v4_t *>(p_quote_sig)->attest_pub_key;
         p_quote_sig_certification_data = reinterpret_cast<sgx_mldsa_65_sig_data_v4_t *>(p_quote_sig)->certification_data;
@@ -2541,27 +2708,39 @@ uint32_t gen_quote(uint8_t *p_blob,
         }
         memcpy(p_quote_sig_pub_key, &plaintext.ecdsa_att_public_key, sizeof(plaintext.ecdsa_att_public_key));
     } else {
-        set_tdqe_debug_stage(330, "gen_quote mldsa: before tdqe_mldsa65_sign");
-        if (0 != tdqe_mldsa65_sign(p_quote_sig,
-            p_quote_buf,
-            sign_buf_size,
-            pciphertext_mldsa->mldsa_private_key)) {
+        set_tdqe_debug_stage(330, "gen_quote mldsa: before tdqe_mldsa_sign");
+        if (((algorithm_id == SGX_QL_ALG_MLDSA_87) &&
+             (0 != tdqe_mldsa87_sign(p_quote_sig,
+                p_quote_buf,
+                sign_buf_size,
+                p_mldsa_private_key))) ||
+            ((algorithm_id != SGX_QL_ALG_MLDSA_87) &&
+             (0 != tdqe_mldsa65_sign(p_quote_sig,
+                p_quote_buf,
+                sign_buf_size,
+                p_mldsa_private_key)))) {
             ret = TDQE_ERROR_UNEXPECTED;
             goto ret_point;
         }
-        set_tdqe_debug_stage(331, "gen_quote mldsa: after tdqe_mldsa65_sign");
-        set_tdqe_debug_stage(332, "gen_quote mldsa: before tdqe_mldsa65_verify");
-        if (0 != tdqe_mldsa65_verify(p_quote_sig,
-            p_quote_buf,
-            sign_buf_size,
-            plaintext_mldsa.mldsa_att_public_key)) {
+        set_tdqe_debug_stage(331, "gen_quote mldsa: after tdqe_mldsa_sign");
+        set_tdqe_debug_stage(332, "gen_quote mldsa: before tdqe_mldsa_verify");
+        if (((algorithm_id == SGX_QL_ALG_MLDSA_87) &&
+             (0 != tdqe_mldsa87_verify(p_quote_sig,
+                p_quote_buf,
+                sign_buf_size,
+                p_mldsa_public_key))) ||
+            ((algorithm_id != SGX_QL_ALG_MLDSA_87) &&
+             (0 != tdqe_mldsa65_verify(p_quote_sig,
+                p_quote_buf,
+                sign_buf_size,
+                p_mldsa_public_key)))) {
             ret = TDQE_ERROR_UNEXPECTED;
             goto ret_point;
         }
-        set_tdqe_debug_stage(333, "gen_quote mldsa: after tdqe_mldsa65_verify");
+        set_tdqe_debug_stage(333, "gen_quote mldsa: after tdqe_mldsa_verify");
         memcpy(p_quote_sig_pub_key,
-            plaintext_mldsa.mldsa_att_public_key,
-            sizeof(plaintext_mldsa.mldsa_att_public_key));
+            p_mldsa_public_key,
+            mldsa_public_key_size);
     }
     set_tdqe_debug_stage(334, "gen_quote: signature/public-key material populated");
 

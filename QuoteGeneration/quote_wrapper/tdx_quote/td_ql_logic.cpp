@@ -32,6 +32,7 @@ extern "C" void ocall_debug_message(const char *msg)
 #endif
 #define ECDSA_BLOB_LABEL "tdqe_data.blob"
 #define MLDSA_65_BLOB_LABEL "tdqe_data_mldsa_65.blob"
+#define MLDSA_87_BLOB_LABEL "tdqe_data_mldsa_87.blob"
 
 
 #define MAX_CERT_DATA_SIZE (4098*3)
@@ -43,6 +44,8 @@ static const char* get_blob_label_for_algorithm(uint32_t algorithm_id)
 {
     switch (algorithm_id)
     {
+    case SGX_QL_ALG_MLDSA_87:
+        return MLDSA_87_BLOB_LABEL;
     case SGX_QL_ALG_MLDSA_65:
         return MLDSA_65_BLOB_LABEL;
     case SGX_QL_ALG_ECDSA_P256:
@@ -55,11 +58,25 @@ static uint32_t get_tdqe_blob_size_for_algorithm(uint32_t algorithm_id)
 {
     switch (algorithm_id)
     {
+    case SGX_QL_ALG_MLDSA_87:
+        return SGX_QL_TRUSTED_MLDSA_87_BLOB_SIZE_SDK;
     case SGX_QL_ALG_MLDSA_65:
         return SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK;
     case SGX_QL_ALG_ECDSA_P256:
     default:
         return SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK;
+    }
+}
+
+static uint32_t get_mldsa_sig_data_struct_size_for_algorithm(uint32_t algorithm_id)
+{
+    switch (algorithm_id)
+    {
+    case SGX_QL_ALG_MLDSA_87:
+        return (uint32_t)sizeof(sgx_mldsa_87_sig_data_v4_t);
+    case SGX_QL_ALG_MLDSA_65:
+    default:
+        return (uint32_t)sizeof(sgx_mldsa_65_sig_data_v4_t);
     }
 }
 
@@ -130,7 +147,8 @@ static bool get_tdqe_blob_plaintext_view(const uint8_t *p_blob,
     }
 
     if ((blob_size != SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK) &&
-        (blob_size != SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK)) {
+        (blob_size != SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK) &&
+        (blob_size != SGX_QL_TRUSTED_MLDSA_87_BLOB_SIZE_SDK)) {
         return false;
     }
 
@@ -158,6 +176,22 @@ static bool get_tdqe_blob_plaintext_view(const uint8_t *p_blob,
     if (p_view->seal_blob_type == SGX_QL_SEAL_MLDSA_65_KEY_BLOB) {
         const ref_plaintext_mldsa_65_data_sdk_t *p_mldsa =
             reinterpret_cast<const ref_plaintext_mldsa_65_data_sdk_t *>(p_plaintext);
+        p_view->certification_key_type = &p_mldsa->certification_key_type;
+        p_view->cert_qe_isv_svn = &p_mldsa->cert_qe_isv_svn;
+        p_view->cert_cpu_svn = &p_mldsa->cert_cpu_svn;
+        p_view->cert_pce_info = &p_mldsa->cert_pce_info;
+        p_view->raw_cpu_svn = &p_mldsa->raw_cpu_svn;
+        p_view->raw_pce_info = &p_mldsa->raw_pce_info;
+        p_view->signature_scheme = &p_mldsa->signature_scheme;
+        p_view->pce_target_info = &p_mldsa->pce_target_info;
+        p_view->qe_report = &p_mldsa->qe_report;
+        p_view->qe_id = &p_mldsa->qe_id;
+        return true;
+    }
+
+    if (p_view->seal_blob_type == SGX_QL_SEAL_MLDSA_87_KEY_BLOB) {
+        const ref_plaintext_mldsa_87_data_sdk_t *p_mldsa =
+            reinterpret_cast<const ref_plaintext_mldsa_87_data_sdk_t *>(p_plaintext);
         p_view->certification_key_type = &p_mldsa->certification_key_type;
         p_view->cert_qe_isv_svn = &p_mldsa->cert_qe_isv_svn;
         p_view->cert_cpu_svn = &p_mldsa->cert_cpu_svn;
@@ -206,6 +240,59 @@ inline errno_t memcpy_s(void *dest, size_t numberOfElements, const void *src, si
 }
 #define strcpy_s(dst, dstsize, src) strncpy(dst, src, dstsize)
 #endif
+
+template <typename PlaintextT>
+static tee_att_error_t populate_mldsa_plaintext(PlaintextT *p_plaintext,
+                                                const sgx_cpu_svn_t *p_cert_cpu_svn,
+                                                sgx_isv_svn_t cert_pce_isv_svn,
+                                                uint16_t cert_pce_id,
+                                                const sgx_cpu_svn_t *p_raw_cpu_svn,
+                                                sgx_isv_svn_t raw_pce_isv_svn,
+                                                uint16_t raw_pce_id,
+                                                const sgx_report_t *p_qe_report,
+                                                const sgx_key_128bit_t *p_qe_id,
+                                                uint8_t signature_scheme,
+                                                const sgx_target_info_t *p_pce_target_info,
+                                                sgx_ql_cert_key_type_t certification_key_type)
+{
+    if ((NULL == p_plaintext) ||
+        (NULL == p_cert_cpu_svn) ||
+        (NULL == p_raw_cpu_svn) ||
+        (NULL == p_qe_report) ||
+        (NULL == p_qe_id) ||
+        (NULL == p_pce_target_info)) {
+        return TEE_ATT_ERROR_INVALID_PARAMETER;
+    }
+
+    memset(p_plaintext, 0, sizeof(*p_plaintext));
+    if (0 != memcpy_s(&p_plaintext->cert_cpu_svn, sizeof(p_plaintext->cert_cpu_svn),
+                      p_cert_cpu_svn, sizeof(*p_cert_cpu_svn))) {
+        return TEE_ATT_ERROR_UNEXPECTED;
+    }
+    p_plaintext->cert_pce_info.pce_isv_svn = cert_pce_isv_svn;
+    p_plaintext->cert_pce_info.pce_id = cert_pce_id;
+    if (0 != memcpy_s(&p_plaintext->raw_cpu_svn, sizeof(p_plaintext->raw_cpu_svn),
+                      p_raw_cpu_svn, sizeof(*p_raw_cpu_svn))) {
+        return TEE_ATT_ERROR_UNEXPECTED;
+    }
+    p_plaintext->raw_pce_info.pce_isv_svn = raw_pce_isv_svn;
+    p_plaintext->raw_pce_info.pce_id = raw_pce_id;
+    if (0 != memcpy_s(&p_plaintext->qe_report, sizeof(p_plaintext->qe_report),
+                      p_qe_report, sizeof(*p_qe_report))) {
+        return TEE_ATT_ERROR_UNEXPECTED;
+    }
+    if (0 != memcpy_s(&p_plaintext->qe_id, sizeof(p_plaintext->qe_id),
+                      p_qe_id, sizeof(*p_qe_id))) {
+        return TEE_ATT_ERROR_UNEXPECTED;
+    }
+    p_plaintext->signature_scheme = signature_scheme;
+    if (0 != memcpy_s(&p_plaintext->pce_target_info, sizeof(p_plaintext->pce_target_info),
+                      p_pce_target_info, sizeof(*p_pce_target_info))) {
+        return TEE_ATT_ERROR_UNEXPECTED;
+    }
+    p_plaintext->certification_key_type = certification_key_type;
+    return TEE_ATT_SUCCESS;
+}
 
 
 /**
@@ -1078,7 +1165,8 @@ tee_att_error_t tee_att_config_t::certify_key(uint8_t *p_ecdsa_blob,
     sgx_ec256_signature_t pce_sig;
     const uint32_t tdqe_blob_size = get_tdqe_blob_size_for_algorithm(m_att_key_algorithm_id);
     ref_plaintext_ecdsa_data_sdk_t *p_plaintext_ecdsa = NULL;
-    ref_plaintext_mldsa_65_data_sdk_t *p_plaintext_mldsa = NULL;
+    ref_plaintext_mldsa_65_data_sdk_t *p_plaintext_mldsa65 = NULL;
+    ref_plaintext_mldsa_87_data_sdk_t *p_plaintext_mldsa87 = NULL;
     sgx_isv_svn_t *p_cert_pce_isv_svn = NULL;
     sgx_cpu_svn_t *p_cert_cpu_svn = NULL;
     sgx_report_t *p_qe_report = NULL;
@@ -1110,11 +1198,17 @@ tee_att_error_t tee_att_config_t::certify_key(uint8_t *p_ecdsa_blob,
         p_qe_report = &p_plaintext_ecdsa->qe_report;
         p_qe_report_cert_key_sig = &p_plaintext_ecdsa->qe_report_cert_key_sig;
     } else if (plaintext_data_size == sizeof(ref_plaintext_mldsa_65_data_sdk_t)) {
-        p_plaintext_mldsa = reinterpret_cast<ref_plaintext_mldsa_65_data_sdk_t *>(p_plaintext_data);
-        p_cert_pce_isv_svn = &p_plaintext_mldsa->cert_pce_info.pce_isv_svn;
-        p_cert_cpu_svn = &p_plaintext_mldsa->cert_cpu_svn;
-        p_qe_report = &p_plaintext_mldsa->qe_report;
-        p_qe_report_cert_key_sig = &p_plaintext_mldsa->qe_report_cert_key_sig;
+        p_plaintext_mldsa65 = reinterpret_cast<ref_plaintext_mldsa_65_data_sdk_t *>(p_plaintext_data);
+        p_cert_pce_isv_svn = &p_plaintext_mldsa65->cert_pce_info.pce_isv_svn;
+        p_cert_cpu_svn = &p_plaintext_mldsa65->cert_cpu_svn;
+        p_qe_report = &p_plaintext_mldsa65->qe_report;
+        p_qe_report_cert_key_sig = &p_plaintext_mldsa65->qe_report_cert_key_sig;
+    } else if (plaintext_data_size == sizeof(ref_plaintext_mldsa_87_data_sdk_t)) {
+        p_plaintext_mldsa87 = reinterpret_cast<ref_plaintext_mldsa_87_data_sdk_t *>(p_plaintext_data);
+        p_cert_pce_isv_svn = &p_plaintext_mldsa87->cert_pce_info.pce_isv_svn;
+        p_cert_cpu_svn = &p_plaintext_mldsa87->cert_cpu_svn;
+        p_qe_report = &p_plaintext_mldsa87->qe_report;
+        p_qe_report_cert_key_sig = &p_plaintext_mldsa87->qe_report_cert_key_sig;
     } else {
         return(TEE_ATT_ERROR_INVALID_PARAMETER);
     }
@@ -1230,6 +1324,7 @@ tee_att_error_t tee_att_config_t::legacy_init_quote(sgx_ql_cert_key_type_t certi
     {
     case SGX_QL_ALG_ECDSA_P256:
         return ecdsa_init_quote(certification_key_type, p_qe_target_info, refresh_att_key, p_pub_key_id);
+    case SGX_QL_ALG_MLDSA_87:
     case SGX_QL_ALG_MLDSA_65:
         return mldsa_init_quote(certification_key_type, p_qe_target_info, refresh_att_key, p_pub_key_id);
     default:
@@ -1252,12 +1347,15 @@ tee_att_error_t tee_att_config_t::trusted_tdx_only_init_quote(sgx_ql_cert_key_ty
     sgx_report_body_t tdqe_report_body;
     sgx_report_t tdqe_report;
     sgx_target_info_t local_target_info;
+    ref_plaintext_mldsa_65_data_sdk_t plaintext_data_mldsa;
+    ref_plaintext_mldsa_87_data_sdk_t plaintext_data_mldsa87;
     uint32_t blob_size_read = get_tdqe_blob_size_for_algorithm(m_att_key_algorithm_id);
     int blob_mutex_rc = 0;
     const uint32_t tdqe_blob_size = get_tdqe_blob_size_for_algorithm(m_att_key_algorithm_id);
 
-    if (m_att_key_algorithm_id != SGX_QL_ALG_MLDSA_65) {
-        SE_TRACE(SE_TRACE_ERROR, "Trusted TDX-only bootstrap is only implemented for ML-DSA-65.\n");
+    if ((m_att_key_algorithm_id != SGX_QL_ALG_MLDSA_65) &&
+        (m_att_key_algorithm_id != SGX_QL_ALG_MLDSA_87)) {
+        SE_TRACE(SE_TRACE_ERROR, "Trusted TDX-only bootstrap is only implemented for ML-DSA.\n");
         return TEE_ATT_UNSUPPORTED_ATT_KEY_ID;
     }
 
@@ -1405,7 +1503,6 @@ tee_att_error_t tee_att_config_t::trusted_tdx_only_init_quote(sgx_ql_cert_key_ty
     } while (0);
 
     if (gen_new_key) {
-        ref_plaintext_mldsa_65_data_sdk_t plaintext_data_mldsa;
         uint8_t authentication_data[REF_ECDSDA_AUTHENTICATION_DATA_SIZE] =
             {0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,
              0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1a,0x1b,0x1c,0x1d,0x1e,0x1f};
@@ -1454,58 +1551,59 @@ tee_att_error_t tee_att_config_t::trusted_tdx_only_init_quote(sgx_ql_cert_key_ty
             }
         }
 
-        memset(&plaintext_data_mldsa, 0, sizeof(plaintext_data_mldsa));
-        if (0 != memcpy_s(&plaintext_data_mldsa.cert_cpu_svn,
-                          sizeof(plaintext_data_mldsa.cert_cpu_svn),
-                          &tdqe_report.body.cpu_svn,
-                          sizeof(tdqe_report.body.cpu_svn))) {
-            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-            goto CLEANUP;
-        }
-        if (0 != memcpy_s(&plaintext_data_mldsa.raw_cpu_svn,
-                          sizeof(plaintext_data_mldsa.raw_cpu_svn),
-                          &tdqe_report.body.cpu_svn,
-                          sizeof(tdqe_report.body.cpu_svn))) {
-            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-            goto CLEANUP;
-        }
-        if (0 != memcpy_s(&plaintext_data_mldsa.qe_report,
-                          sizeof(plaintext_data_mldsa.qe_report),
-                          &tdqe_report,
-                          sizeof(tdqe_report))) {
-            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-            goto CLEANUP;
-        }
-        if (0 != memcpy_s(&plaintext_data_mldsa.qe_id,
-                          sizeof(plaintext_data_mldsa.qe_id),
-                          m_qe_id,
-                          sizeof(*m_qe_id))) {
-            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-            goto CLEANUP;
-        }
-        if (0 != memcpy_s(&plaintext_data_mldsa.pce_target_info,
-                          sizeof(plaintext_data_mldsa.pce_target_info),
-                          &local_target_info,
-                          sizeof(local_target_info))) {
-            refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-            goto CLEANUP;
-        }
-        plaintext_data_mldsa.signature_scheme = PCE_NIST_P256_ECDSA_SHA256;
-        plaintext_data_mldsa.certification_key_type = certification_key_type;
-        plaintext_data_mldsa.cert_pce_info.pce_isv_svn = m_raw_pce_isvsvn;
-        plaintext_data_mldsa.cert_pce_info.pce_id = m_pce_info.pce_id;
-        plaintext_data_mldsa.raw_pce_info.pce_isv_svn = m_raw_pce_isvsvn;
-        plaintext_data_mldsa.raw_pce_info.pce_id = m_pce_info.pce_id;
+        if (m_att_key_algorithm_id == SGX_QL_ALG_MLDSA_87) {
+            refqt_ret = populate_mldsa_plaintext(&plaintext_data_mldsa87,
+                                                 &tdqe_report.body.cpu_svn,
+                                                 m_raw_pce_isvsvn,
+                                                 m_pce_info.pce_id,
+                                                 &tdqe_report.body.cpu_svn,
+                                                 m_raw_pce_isvsvn,
+                                                 m_pce_info.pce_id,
+                                                 &tdqe_report,
+                                                 m_qe_id,
+                                                 PCE_NIST_P256_ECDSA_SHA256,
+                                                 &local_target_info,
+                                                 certification_key_type);
+            if (TEE_ATT_SUCCESS != refqt_ret) {
+                goto CLEANUP;
+            }
 
-        sgx_status = store_cert_data(m_eid,
-                                     (uint32_t*)&tdqe_error,
-                                     reinterpret_cast<uint8_t*>(&plaintext_data_mldsa),
-                                     sizeof(plaintext_data_mldsa),
-                                     certification_key_type,
-                                     NULL,
-                                     0,
-                                     m_ecdsa_blob,
-                                     tdqe_blob_size);
+            sgx_status = store_cert_data(m_eid,
+                                         (uint32_t*)&tdqe_error,
+                                         reinterpret_cast<uint8_t*>(&plaintext_data_mldsa87),
+                                         sizeof(plaintext_data_mldsa87),
+                                         certification_key_type,
+                                         NULL,
+                                         0,
+                                         m_ecdsa_blob,
+                                         tdqe_blob_size);
+        } else {
+            refqt_ret = populate_mldsa_plaintext(&plaintext_data_mldsa,
+                                                 &tdqe_report.body.cpu_svn,
+                                                 m_raw_pce_isvsvn,
+                                                 m_pce_info.pce_id,
+                                                 &tdqe_report.body.cpu_svn,
+                                                 m_raw_pce_isvsvn,
+                                                 m_pce_info.pce_id,
+                                                 &tdqe_report,
+                                                 m_qe_id,
+                                                 PCE_NIST_P256_ECDSA_SHA256,
+                                                 &local_target_info,
+                                                 certification_key_type);
+            if (TEE_ATT_SUCCESS != refqt_ret) {
+                goto CLEANUP;
+            }
+
+            sgx_status = store_cert_data(m_eid,
+                                         (uint32_t*)&tdqe_error,
+                                         reinterpret_cast<uint8_t*>(&plaintext_data_mldsa),
+                                         sizeof(plaintext_data_mldsa),
+                                         certification_key_type,
+                                         NULL,
+                                         0,
+                                         m_ecdsa_blob,
+                                         tdqe_blob_size);
+        }
         if (SGX_SUCCESS != sgx_status) {
             refqt_ret = (tee_att_error_t)sgx_status;
             goto CLEANUP;
@@ -1686,6 +1784,7 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
     tdqe_blob_plaintext_view_t blob_view;
     ref_plaintext_ecdsa_data_sdk_t plaintext_data;
     ref_plaintext_mldsa_65_data_sdk_t plaintext_data_mldsa;
+    ref_plaintext_mldsa_87_data_sdk_t plaintext_data_mldsa87;
     uint8_t encrypted_ppid[REF_RSA_OAEP_3072_MOD_SIZE];
     int blob_mutex_rc = 0;
     bool is_fresh_loaded = false;
@@ -1957,39 +2056,44 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
                                             NULL,
                                             0,
                                             certification_key_type);
+                } else if (m_att_key_algorithm_id == SGX_QL_ALG_MLDSA_87) {
+                    refqt_ret = populate_mldsa_plaintext(&plaintext_data_mldsa87,
+                                                         &pce_cert_psvn.cpu_svn,
+                                                         pce_cert_psvn.isv_svn,
+                                                         blob_view.cert_pce_info->pce_id,
+                                                         &tdqe_report_body.cpu_svn,
+                                                         pce_isv_svn,
+                                                         blob_view.cert_pce_info->pce_id,
+                                                         blob_view.qe_report,
+                                                         m_qe_id,
+                                                         *blob_view.signature_scheme,
+                                                         &pce_target_info,
+                                                         certification_key_type);
+                    if (TEE_ATT_SUCCESS != refqt_ret) {
+                        goto CLEANUP;
+                    }
+                    refqt_ret = certify_key(m_ecdsa_blob,
+                                            reinterpret_cast<uint8_t*>(&plaintext_data_mldsa87),
+                                            sizeof(plaintext_data_mldsa87),
+                                            NULL,
+                                            0,
+                                            certification_key_type);
                 } else {
-                    memset(&plaintext_data_mldsa, 0, sizeof(plaintext_data_mldsa));
-                    if(0 != memcpy_s(&plaintext_data_mldsa.cert_cpu_svn, sizeof(plaintext_data_mldsa.cert_cpu_svn),
-                                     &pce_cert_psvn.cpu_svn, sizeof(pce_cert_psvn.cpu_svn))) {
-                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                    refqt_ret = populate_mldsa_plaintext(&plaintext_data_mldsa,
+                                                         &pce_cert_psvn.cpu_svn,
+                                                         pce_cert_psvn.isv_svn,
+                                                         blob_view.cert_pce_info->pce_id,
+                                                         &tdqe_report_body.cpu_svn,
+                                                         pce_isv_svn,
+                                                         blob_view.cert_pce_info->pce_id,
+                                                         blob_view.qe_report,
+                                                         m_qe_id,
+                                                         *blob_view.signature_scheme,
+                                                         &pce_target_info,
+                                                         certification_key_type);
+                    if (TEE_ATT_SUCCESS != refqt_ret) {
                         goto CLEANUP;
                     }
-                    plaintext_data_mldsa.cert_pce_info.pce_isv_svn = pce_cert_psvn.isv_svn;
-                    plaintext_data_mldsa.cert_pce_info.pce_id = blob_view.cert_pce_info->pce_id;
-                    if(0 != memcpy_s(&plaintext_data_mldsa.raw_cpu_svn, sizeof(plaintext_data_mldsa.raw_cpu_svn),
-                                     &tdqe_report_body.cpu_svn, sizeof(tdqe_report_body.cpu_svn))) {
-                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                        goto CLEANUP;
-                    }
-                    plaintext_data_mldsa.raw_pce_info.pce_isv_svn = pce_isv_svn;
-                    plaintext_data_mldsa.raw_pce_info.pce_id = blob_view.cert_pce_info->pce_id;
-                    if(0 != memcpy_s(&plaintext_data_mldsa.qe_report, sizeof(plaintext_data_mldsa.qe_report),
-                                     blob_view.qe_report, sizeof(*blob_view.qe_report))) {
-                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                        goto CLEANUP;
-                    }
-                    if (0 != memcpy_s(&plaintext_data_mldsa.qe_id, sizeof(plaintext_data_mldsa.qe_id),
-                        m_qe_id, sizeof(*m_qe_id))) {
-                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                        goto CLEANUP;
-                    }
-                    plaintext_data_mldsa.signature_scheme = *blob_view.signature_scheme;
-                    if(0 != memcpy_s(&plaintext_data_mldsa.pce_target_info, sizeof(plaintext_data_mldsa.pce_target_info),
-                                     &pce_target_info, sizeof(pce_target_info))) {
-                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                        goto CLEANUP;
-                    }
-                    plaintext_data_mldsa.certification_key_type = certification_key_type;
                     refqt_ret = certify_key(m_ecdsa_blob,
                                             reinterpret_cast<uint8_t*>(&plaintext_data_mldsa),
                                             sizeof(plaintext_data_mldsa),
@@ -2048,39 +2152,44 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
                                             NULL,
                                             0,
                                             certification_key_type);
+                } else if (m_att_key_algorithm_id == SGX_QL_ALG_MLDSA_87) {
+                    refqt_ret = populate_mldsa_plaintext(&plaintext_data_mldsa87,
+                                                         &pce_cert_psvn.cpu_svn,
+                                                         pce_cert_psvn.isv_svn,
+                                                         blob_view.cert_pce_info->pce_id,
+                                                         &tdqe_report_body.cpu_svn,
+                                                         pce_isv_svn,
+                                                         blob_view.cert_pce_info->pce_id,
+                                                         blob_view.qe_report,
+                                                         m_qe_id,
+                                                         *blob_view.signature_scheme,
+                                                         &pce_target_info,
+                                                         certification_key_type);
+                    if (TEE_ATT_SUCCESS != refqt_ret) {
+                        goto CLEANUP;
+                    }
+                    refqt_ret = certify_key(m_ecdsa_blob,
+                                            reinterpret_cast<uint8_t*>(&plaintext_data_mldsa87),
+                                            sizeof(plaintext_data_mldsa87),
+                                            NULL,
+                                            0,
+                                            certification_key_type);
                 } else {
-                    memset(&plaintext_data_mldsa, 0, sizeof(plaintext_data_mldsa));
-                    if(0 != memcpy_s(&plaintext_data_mldsa.cert_cpu_svn, sizeof(plaintext_data_mldsa.cert_cpu_svn),
-                                     &pce_cert_psvn.cpu_svn, sizeof(pce_cert_psvn.cpu_svn))) {
-                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+                    refqt_ret = populate_mldsa_plaintext(&plaintext_data_mldsa,
+                                                         &pce_cert_psvn.cpu_svn,
+                                                         pce_cert_psvn.isv_svn,
+                                                         blob_view.cert_pce_info->pce_id,
+                                                         &tdqe_report_body.cpu_svn,
+                                                         pce_isv_svn,
+                                                         blob_view.cert_pce_info->pce_id,
+                                                         blob_view.qe_report,
+                                                         m_qe_id,
+                                                         *blob_view.signature_scheme,
+                                                         &pce_target_info,
+                                                         certification_key_type);
+                    if (TEE_ATT_SUCCESS != refqt_ret) {
                         goto CLEANUP;
                     }
-                    plaintext_data_mldsa.cert_pce_info.pce_isv_svn = pce_cert_psvn.isv_svn;
-                    plaintext_data_mldsa.cert_pce_info.pce_id = blob_view.cert_pce_info->pce_id;
-                    if(0 != memcpy_s(&plaintext_data_mldsa.raw_cpu_svn, sizeof(plaintext_data_mldsa.raw_cpu_svn),
-                                     &tdqe_report_body.cpu_svn, sizeof(tdqe_report_body.cpu_svn))) {
-                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                        goto CLEANUP;
-                    }
-                    plaintext_data_mldsa.raw_pce_info.pce_isv_svn = pce_isv_svn;
-                    plaintext_data_mldsa.raw_pce_info.pce_id = blob_view.cert_pce_info->pce_id;
-                    if(0 != memcpy_s(&plaintext_data_mldsa.qe_report, sizeof(plaintext_data_mldsa.qe_report),
-                                     blob_view.qe_report, sizeof(*blob_view.qe_report))){
-                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                        goto CLEANUP;
-                    }
-                    if (0 != memcpy_s(&plaintext_data_mldsa.qe_id, sizeof(plaintext_data_mldsa.qe_id),
-                        m_qe_id, sizeof(*m_qe_id))) {
-                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                        goto CLEANUP;
-                    }
-                    plaintext_data_mldsa.signature_scheme = *blob_view.signature_scheme;
-                    if(0 != memcpy_s(&plaintext_data_mldsa.pce_target_info, sizeof(plaintext_data_mldsa.pce_target_info),
-                                     &pce_target_info, sizeof(pce_target_info))) {
-                        refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                        goto CLEANUP;
-                    }
-                    plaintext_data_mldsa.certification_key_type = certification_key_type;
                     refqt_ret = certify_key(m_ecdsa_blob,
                                             reinterpret_cast<uint8_t*>(&plaintext_data_mldsa),
                                             sizeof(plaintext_data_mldsa),
@@ -2179,6 +2288,7 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
         cert_data_size = 0;
         memset(&plaintext_data, 0, sizeof(plaintext_data));
         memset(&plaintext_data_mldsa, 0, sizeof(plaintext_data_mldsa));
+        memset(&plaintext_data_mldsa87, 0, sizeof(plaintext_data_mldsa87));
         pck_cert_id.p_qe3_id = (uint8_t*)m_qe_id;
         pck_cert_id.qe3_id_size = sizeof(*m_qe_id);
         pck_cert_id.p_platform_cpu_svn = &tdqe_report.body.cpu_svn;
@@ -2245,38 +2355,44 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
                                     encrypted_ppid,
                                     REF_RSA_OAEP_3072_MOD_SIZE,
                                     certification_key_type);
+        } else if (m_att_key_algorithm_id == SGX_QL_ALG_MLDSA_87) {
+            refqt_ret = populate_mldsa_plaintext(&plaintext_data_mldsa87,
+                                                 &pce_cert_psvn.cpu_svn,
+                                                 pce_cert_psvn.isv_svn,
+                                                 0,
+                                                 &tdqe_report.body.cpu_svn,
+                                                 m_pce_info.pce_isv_svn,
+                                                 m_pce_info.pce_id,
+                                                 &tdqe_report,
+                                                 m_qe_id,
+                                                 PCE_NIST_P256_ECDSA_SHA256,
+                                                 &pce_target_info,
+                                                 certification_key_type);
+            if (TEE_ATT_SUCCESS != refqt_ret) {
+                goto CLEANUP;
+            }
+            refqt_ret = certify_key(m_ecdsa_blob,
+                                    reinterpret_cast<uint8_t*>(&plaintext_data_mldsa87),
+                                    sizeof(plaintext_data_mldsa87),
+                                    encrypted_ppid,
+                                    REF_RSA_OAEP_3072_MOD_SIZE,
+                                    certification_key_type);
         } else {
-            if(0 != memcpy_s(&plaintext_data_mldsa.cert_cpu_svn, sizeof(plaintext_data_mldsa.cert_cpu_svn),
-                             &pce_cert_psvn.cpu_svn, sizeof(pce_cert_psvn.cpu_svn))) {
-                refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
+            refqt_ret = populate_mldsa_plaintext(&plaintext_data_mldsa,
+                                                 &pce_cert_psvn.cpu_svn,
+                                                 pce_cert_psvn.isv_svn,
+                                                 0,
+                                                 &tdqe_report.body.cpu_svn,
+                                                 m_pce_info.pce_isv_svn,
+                                                 m_pce_info.pce_id,
+                                                 &tdqe_report,
+                                                 m_qe_id,
+                                                 PCE_NIST_P256_ECDSA_SHA256,
+                                                 &pce_target_info,
+                                                 certification_key_type);
+            if (TEE_ATT_SUCCESS != refqt_ret) {
                 goto CLEANUP;
             }
-            plaintext_data_mldsa.cert_pce_info.pce_isv_svn = pce_cert_psvn.isv_svn;
-            plaintext_data_mldsa.cert_pce_info.pce_id = 0;
-            if(0 != memcpy_s(&plaintext_data_mldsa.raw_cpu_svn, sizeof(plaintext_data_mldsa.raw_cpu_svn),
-                             &tdqe_report.body.cpu_svn, sizeof(tdqe_report.body.cpu_svn))) {
-                refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                goto CLEANUP;
-            }
-            plaintext_data_mldsa.raw_pce_info.pce_isv_svn = m_pce_info.pce_isv_svn;
-            plaintext_data_mldsa.raw_pce_info.pce_id = m_pce_info.pce_id;
-            if(0 != memcpy_s(&plaintext_data_mldsa.qe_report, sizeof(plaintext_data_mldsa.qe_report),
-                             &tdqe_report, sizeof(tdqe_report))) {
-                refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                goto CLEANUP;
-            }
-            if (0 != memcpy_s(&plaintext_data_mldsa.qe_id, sizeof(plaintext_data_mldsa.qe_id),
-                m_qe_id, sizeof(*m_qe_id))) {
-                refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                goto CLEANUP;
-            }
-            plaintext_data_mldsa.signature_scheme = PCE_NIST_P256_ECDSA_SHA256;
-            if(0 != memcpy_s(&plaintext_data_mldsa.pce_target_info, sizeof(plaintext_data_mldsa.pce_target_info),
-                             &pce_target_info, sizeof(pce_target_info))) {
-                refqt_ret = TEE_ATT_ERROR_UNEXPECTED;
-                goto CLEANUP;
-            }
-            plaintext_data_mldsa.certification_key_type = certification_key_type;
             refqt_ret = certify_key(m_ecdsa_blob,
                                     reinterpret_cast<uint8_t*>(&plaintext_data_mldsa),
                                     sizeof(plaintext_data_mldsa),
@@ -2347,6 +2463,7 @@ tee_att_error_t tee_att_config_t::get_quote_size(sgx_ql_cert_key_type_t certific
     {
     case SGX_QL_ALG_ECDSA_P256:
         return ecdsa_get_quote_size(certification_key_type, p_quote_size);
+    case SGX_QL_ALG_MLDSA_87:
     case SGX_QL_ALG_MLDSA_65:
         return mldsa_get_quote_size(certification_key_type, p_quote_size);
     default:
@@ -2577,7 +2694,7 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote_size(sgx_ql_cert_key_type_t ce
         *p_quote_size = sizeof(sgx_quote5_t) +
                         sizeof(sgx_report2_body_v1_5_ex_t) +
                         sizeof(uint32_t) +
-                        sizeof(sgx_mldsa_65_sig_data_v4_t) +
+                        get_mldsa_sig_data_struct_size_for_algorithm(m_att_key_algorithm_id) +
                         sizeof(sgx_ql_certification_data_t) +
                         sizeof(sgx_qe_report_certification_data_t) +
                         sizeof(sgx_ql_auth_data_t) +
@@ -2654,7 +2771,7 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote_size(sgx_ql_cert_key_type_t ce
         *p_quote_size = sizeof(sgx_quote5_t) +
                         sizeof(sgx_report2_body_v1_5_ex_t) +
                         sizeof(uint32_t) +
-                        sizeof(sgx_mldsa_65_sig_data_v4_t) +
+                        get_mldsa_sig_data_struct_size_for_algorithm(m_att_key_algorithm_id) +
                         sizeof(sgx_ql_certification_data_t) +
                         sizeof(sgx_qe_report_certification_data_t) +
                         sizeof(sgx_ql_auth_data_t) +
@@ -2673,7 +2790,7 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote_size(sgx_ql_cert_key_type_t ce
             *p_quote_size = sizeof(sgx_quote5_t) +
                             sizeof(sgx_report2_body_v1_5_ex_t) +
                             sizeof(uint32_t) +
-                            sizeof(sgx_mldsa_65_sig_data_v4_t) +
+                            get_mldsa_sig_data_struct_size_for_algorithm(m_att_key_algorithm_id) +
                             sizeof(sgx_ql_certification_data_t) +
                             sizeof(sgx_qe_report_certification_data_t) +
                             sizeof(sgx_ql_auth_data_t) +
@@ -2690,7 +2807,7 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote_size(sgx_ql_cert_key_type_t ce
             *p_quote_size = sizeof(sgx_quote5_t) +
                             sizeof(sgx_report2_body_v1_5_ex_t) +
                             sizeof(uint32_t) +
-                            sizeof(sgx_mldsa_65_sig_data_v4_t) +
+                            get_mldsa_sig_data_struct_size_for_algorithm(m_att_key_algorithm_id) +
                             sizeof(sgx_ql_certification_data_t) +
                             sizeof(sgx_qe_report_certification_data_t) +
                             sizeof(sgx_ql_auth_data_t) +
@@ -2703,7 +2820,7 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote_size(sgx_ql_cert_key_type_t ce
         *p_quote_size = (uint32_t)(sizeof(sgx_quote5_t) +
                                    sizeof(sgx_report2_body_v1_5_ex_t) +
                                    sizeof(uint32_t) +
-                                   sizeof(sgx_mldsa_65_sig_data_v4_t) +
+                                   get_mldsa_sig_data_struct_size_for_algorithm(m_att_key_algorithm_id) +
                                    sizeof(sgx_ql_certification_data_t) +
                                    sizeof(sgx_qe_report_certification_data_t) +
                                    sizeof(sgx_ql_auth_data_t) +
@@ -2763,6 +2880,7 @@ tee_att_error_t tee_att_config_t::get_quote(const sgx_report2_t *p_app_report,
     {
     case SGX_QL_ALG_ECDSA_P256:
         return ecdsa_get_quote(p_app_report, p_quote, quote_size);
+    case SGX_QL_ALG_MLDSA_87:
     case SGX_QL_ALG_MLDSA_65:
         return mldsa_get_quote(p_app_report, p_quote, quote_size);
     default:
@@ -3179,7 +3297,7 @@ tee_att_error_t tee_att_config_t::mldsa_get_quote(const sgx_report2_t *p_app_rep
         if (quote_size < (sizeof(sgx_quote5_t) +
                           sizeof(sgx_report2_body_v1_5_ex_t) +
                           sizeof(uint32_t) +
-                          sizeof(sgx_mldsa_65_sig_data_v4_t) +
+                          get_mldsa_sig_data_struct_size_for_algorithm(m_att_key_algorithm_id) +
                           sizeof(sgx_ql_certification_data_t) +
                           sizeof(sgx_ql_certification_data_t) +
                           sizeof(sgx_qe_report_certification_data_t) +

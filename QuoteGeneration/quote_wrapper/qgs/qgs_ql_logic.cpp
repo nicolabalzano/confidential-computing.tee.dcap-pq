@@ -81,6 +81,24 @@ static const sgx_ql_att_key_id_t k_qgs_default_mldsa_65_att_key_id =
     SGX_QL_ALG_MLDSA_65
 };
 
+static const sgx_ql_att_key_id_t k_qgs_default_mldsa_87_att_key_id =
+{
+    0,
+    0,
+    32,
+    { 0x8c, 0x4f, 0x57, 0x75, 0xd7, 0x96, 0x50, 0x3e, 0x96, 0x13, 0x7f, 0x77, 0xc6, 0x8a, 0x82, 0x9a,
+      0x00, 0x56, 0xac, 0x8d, 0xed, 0x70, 0x14, 0x0b, 0x08, 0x1b, 0x09, 0x44, 0x90, 0xc5, 0x7b, 0xff,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    2,
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    SGX_QL_ALG_MLDSA_87
+};
+
 typedef quote3_error_t (*get_collateral_func)(const uint8_t *fmspc,
                                               uint16_t fmspc_size, const char *pck_ca,
                                               tdx_ql_qv_collateral_t **pp_quote_collateral);
@@ -127,7 +145,8 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
                                                      tdx_uuid_t *p_selected_uuid)
     {
         static const tdx_uuid_t kEcdsaUuid = {TDX_SGX_ECDSA_ATTESTATION_ID};
-        static const tdx_uuid_t kMldsaUuid = {TDX_SGX_MLDSA_65_ATTESTATION_ID};
+        static const tdx_uuid_t kMldsa65Uuid = {TDX_SGX_MLDSA_65_ATTESTATION_ID};
+        static const tdx_uuid_t kMldsa87Uuid = {TDX_SGX_MLDSA_87_ATTESTATION_ID};
         const uint32_t uuid_size = sizeof(tdx_uuid_t);
 
         if (p_selected_key_id == NULL || p_selected_uuid == NULL) {
@@ -147,13 +166,22 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
 
         for (uint32_t offset = 0; offset < id_list_size; offset += uuid_size) {
             const uint8_t *candidate = p_id_list + offset;
-            if (is_tdx_uuid_equal(kMldsaUuid, candidate)) {
+            if (is_tdx_uuid_equal(kMldsa87Uuid, candidate)) {
+                if (std::memcpy(&p_selected_key_id->base,
+                                &k_qgs_default_mldsa_87_att_key_id,
+                                sizeof(k_qgs_default_mldsa_87_att_key_id)) == NULL) {
+                    return false;
+                }
+                *p_selected_uuid = kMldsa87Uuid;
+                return true;
+            }
+            if (is_tdx_uuid_equal(kMldsa65Uuid, candidate)) {
                 if (std::memcpy(&p_selected_key_id->base,
                                 &k_qgs_default_mldsa_65_att_key_id,
                                 sizeof(k_qgs_default_mldsa_65_att_key_id)) == NULL) {
                     return false;
                 }
-                *p_selected_uuid = kMldsaUuid;
+                *p_selected_uuid = kMldsa65Uuid;
                 return true;
             }
             if (is_tdx_uuid_equal(kEcdsaUuid, candidate)) {

@@ -11,6 +11,9 @@ extern "C" {
 int tdqe_mldsa65_keygen(uint8_t *public_key, uint8_t *private_key, uint8_t *seed);
 int tdqe_mldsa65_sign(uint8_t *signature, const uint8_t *message, size_t message_len, const uint8_t *private_key);
 int tdqe_mldsa65_verify(const uint8_t *signature, const uint8_t *message, size_t message_len, const uint8_t *public_key);
+int tdqe_mldsa87_keygen(uint8_t *public_key, uint8_t *private_key, uint8_t *seed);
+int tdqe_mldsa87_sign(uint8_t *signature, const uint8_t *message, size_t message_len, const uint8_t *private_key);
+int tdqe_mldsa87_verify(const uint8_t *signature, const uint8_t *message, size_t message_len, const uint8_t *public_key);
 
 #if defined(__cplusplus)
 }

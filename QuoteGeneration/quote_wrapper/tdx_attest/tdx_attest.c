@@ -114,6 +114,7 @@ static const unsigned WRONG_PORT_NUMBER = MAX_PORT_NUMBER + 1;
 
 static const tdx_uuid_t g_intel_tdqe_ecdsa_uuid = {TDX_SGX_ECDSA_ATTESTATION_ID};
 static const tdx_uuid_t g_intel_tdqe_mldsa_65_uuid = {TDX_SGX_MLDSA_65_ATTESTATION_ID};
+static const tdx_uuid_t g_intel_tdqe_mldsa_87_uuid = {TDX_SGX_MLDSA_87_ATTESTATION_ID};
 
 static int direct_trace_enabled(void)
 {
@@ -971,7 +972,8 @@ tdx_attest_error_t tdx_att_get_quote(
         uint32_t i = 0;
         for (i = 0; i < list_size; ++i) {
             if (memcmp(&p_att_key_id_list[i], &g_intel_tdqe_ecdsa_uuid, sizeof(g_intel_tdqe_ecdsa_uuid)) != 0 &&
-                memcmp(&p_att_key_id_list[i], &g_intel_tdqe_mldsa_65_uuid, sizeof(g_intel_tdqe_mldsa_65_uuid)) != 0) {
+                memcmp(&p_att_key_id_list[i], &g_intel_tdqe_mldsa_65_uuid, sizeof(g_intel_tdqe_mldsa_65_uuid)) != 0 &&
+                memcmp(&p_att_key_id_list[i], &g_intel_tdqe_mldsa_87_uuid, sizeof(g_intel_tdqe_mldsa_87_uuid)) != 0) {
                 return TDX_ATTEST_ERROR_UNSUPPORTED_ATT_KEY_ID;
             }
         }
@@ -1102,14 +1104,15 @@ tdx_attest_error_t tdx_att_get_supported_att_key_ids(
         return TDX_ATTEST_ERROR_INVALID_PARAMETER;
     }
     if (p_att_key_id_list) {
-        if (*p_list_size < 2) {
-            *p_list_size = 2;
+        if (*p_list_size < 3) {
+            *p_list_size = 3;
             return TDX_ATTEST_ERROR_INVALID_PARAMETER;
         }
         p_att_key_id_list[0] = g_intel_tdqe_ecdsa_uuid;
         p_att_key_id_list[1] = g_intel_tdqe_mldsa_65_uuid;
+        p_att_key_id_list[2] = g_intel_tdqe_mldsa_87_uuid;
     }
-    *p_list_size = 2;
+    *p_list_size = 3;
     return TDX_ATTEST_SUCCESS;
 }
 

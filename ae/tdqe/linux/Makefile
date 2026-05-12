@@ -63,10 +63,10 @@ quoting_enclave_tdqe.o: $(AENAME)_t.c
 tdqe_mldsa_adapter.o: ../tdqe_mldsa_adapter.c
 	$(CC) $(CFLAGS) $(INCLUDE) $(DEFINES) -c $< -o $@
 
-mldsa_native_65.o: $(TOP_DIR)/../ae/pq/mldsa-native/mldsa/mldsa_native_65.c
+mldsa_native_65.o: $(TOP_DIR)/../ae/pq/mldsa_native_65.c
 	$(CC) $(CFLAGS) $(INCLUDE) $(DEFINES) -U__CET__ -c $< -o $@
 
-mldsa_native_87.o: $(TOP_DIR)/../ae/pq/mldsa-native/mldsa/mldsa_native_87.c
+mldsa_native_87.o: $(TOP_DIR)/../ae/pq/mldsa_native_87.c
 	$(CC) $(CFLAGS) $(INCLUDE) $(DEFINES) -U__CET__ -c $< -o $@
 
 $(AENAME)_t.c: ../$(AENAME).edl

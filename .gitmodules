@@ -20,3 +20,4 @@
 [submodule "ae/pq/mldsa-native"]
 	path = ae/pq/mldsa-native
 	url = https://github.com/pq-code-package/mldsa-native.git
+	ignore = untracked

@@ -8,6 +8,11 @@ typedef int (*mldsa_sign_t)(uint8_t *, size_t *, const uint8_t *, size_t, const 
 typedef int (*mldsa_verify_t)(const uint8_t *, size_t, const uint8_t *, size_t, const uint8_t *, size_t, const uint8_t *, int);
 typedef size_t (*mldsa_prepare_prefix_t)(uint8_t[MLD_DOMAIN_SEPARATION_MAX_BYTES], const uint8_t *, size_t, const uint8_t *, size_t, int);
 
+int PQCP_MLDSA_NATIVE_MLDSA65_keypair_internal(uint8_t *public_key, uint8_t *private_key, const uint8_t *seed);
+int PQCP_MLDSA_NATIVE_MLDSA65_signature_internal(uint8_t *signature, size_t *signature_len, const uint8_t *message, size_t message_len, const uint8_t *prefix, size_t prefix_len, const uint8_t *deterministic_rnd, const uint8_t *private_key, int context);
+int PQCP_MLDSA_NATIVE_MLDSA65_verify_internal(const uint8_t *signature, size_t signature_len, const uint8_t *message, size_t message_len, const uint8_t *prefix, size_t prefix_len, const uint8_t *public_key, int context);
+size_t PQCP_MLDSA_NATIVE_MLDSA65_prepare_domain_separation_prefix(uint8_t prefix[MLD_DOMAIN_SEPARATION_MAX_BYTES], const uint8_t *ph, size_t phlen, const uint8_t *ctx, size_t ctxlen, int hashalg);
+
 int PQCP_MLDSA_NATIVE_MLDSA87_keypair_internal(uint8_t *public_key, uint8_t *private_key, const uint8_t *seed);
 int PQCP_MLDSA_NATIVE_MLDSA87_signature_internal(uint8_t *signature, size_t *signature_len, const uint8_t *message, size_t message_len, const uint8_t *prefix, size_t prefix_len, const uint8_t *deterministic_rnd, const uint8_t *private_key, int context);
 int PQCP_MLDSA_NATIVE_MLDSA87_verify_internal(const uint8_t *signature, size_t signature_len, const uint8_t *message, size_t message_len, const uint8_t *prefix, size_t prefix_len, const uint8_t *public_key, int context);

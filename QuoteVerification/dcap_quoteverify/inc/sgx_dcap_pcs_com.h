@@ -46,6 +46,8 @@ extern "C" {
 
 #define QL_API_GET_QUOTE_VERIFICATION_COLLATERAL "sgx_ql_get_quote_verification_collateral"
 #define QL_API_FREE_QUOTE_VERIFICATION_COLLATERAL "sgx_ql_free_quote_verification_collateral"
+#define QL_API_GET_QUOTE_CONFIG "sgx_ql_get_quote_config"
+#define QL_API_FREE_QUOTE_CONFIG "sgx_ql_free_quote_config"
 
 #define QL_API_GET_QVE_IDENTITY "sgx_ql_get_qve_identity"
 #define QL_API_FREE_QVE_IDENTITY "sgx_ql_free_qve_identity"
@@ -67,6 +69,11 @@ typedef quote3_error_t(*sgx_get_quote_verification_collateral_func_t)(const char
         struct _sgx_ql_qve_collateral_t **pp_quote_collateral);
 
 typedef quote3_error_t(*sgx_free_quote_verification_collateral_func_t)(struct _sgx_ql_qve_collateral_t *p_quote_collateral);
+
+typedef quote3_error_t(*sgx_get_quote_config_func_t)(const sgx_ql_pck_cert_id_t *p_pck_cert_id,
+        sgx_ql_config_t **pp_quote_config);
+
+typedef quote3_error_t(*sgx_free_quote_config_func_t)(sgx_ql_config_t *p_quote_config);
 
 typedef quote3_error_t(*sgx_ql_get_qve_identity_func_t)(char **pp_qve_identity,
         uint32_t *p_qve_identity_size,
@@ -96,6 +103,8 @@ typedef quote3_error_t (*tee_free_platform_policy_func_t)(uint8_t *p_platform_po
 
 extern sgx_get_quote_verification_collateral_func_t p_sgx_ql_get_quote_verification_collateral;
 extern sgx_free_quote_verification_collateral_func_t p_sgx_ql_free_quote_verification_collateral;
+extern sgx_get_quote_config_func_t p_sgx_ql_get_quote_config;
+extern sgx_free_quote_config_func_t p_sgx_ql_free_quote_config;
 
 extern sgx_ql_get_qve_identity_func_t p_sgx_ql_get_qve_identity;
 extern sgx_ql_free_qve_identity_func_t p_sgx_ql_free_qve_identity;
@@ -111,6 +120,12 @@ extern tee_free_platform_policy_func_t  p_tee_free_platform_policy;
 
 
 bool sgx_dcap_load_qpl();
+
+quote3_error_t sgx_dcap_retrieve_quote_config(
+        const sgx_ql_pck_cert_id_t *p_pck_cert_id,
+        sgx_ql_config_t **pp_quote_config);
+
+quote3_error_t sgx_dcap_free_quote_config(sgx_ql_config_t *p_quote_config);
 
 quote3_error_t sgx_dcap_retrieve_verification_collateral(
         const char *fmspc,

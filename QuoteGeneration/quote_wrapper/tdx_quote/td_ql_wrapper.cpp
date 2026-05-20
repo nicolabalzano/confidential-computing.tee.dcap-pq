@@ -33,6 +33,7 @@
  */
 #include <string.h>
 #include <limits.h>
+#include <stdlib.h>
 
 #include "sgx_urts.h"
 #include "util.h"
@@ -140,10 +141,21 @@ static const sgx_ql_att_key_id_t* get_default_att_key_id_for_algorithm(uint32_t 
 
 static tee_att_bootstrap_mode_t get_default_bootstrap_mode_for_algorithm(uint32_t algorithm_id)
 {
+    const char *mldsa_bootstrap_mode = getenv("TDX_MLDSA_BOOTSTRAP_MODE");
+
     switch (algorithm_id)
     {
     case SGX_QL_ALG_MLDSA_87:
     case SGX_QL_ALG_MLDSA_65:
+        if (mldsa_bootstrap_mode != NULL)
+        {
+            if (strcmp(mldsa_bootstrap_mode, "legacy_pce") == 0) {
+                return TEE_ATT_BOOTSTRAP_LEGACY_PCE;
+            }
+            if (strcmp(mldsa_bootstrap_mode, "trusted_tdx_only") == 0) {
+                return TEE_ATT_BOOTSTRAP_TRUSTED_TDX_ONLY;
+            }
+        }
         return TEE_ATT_BOOTSTRAP_TRUSTED_TDX_ONLY;
     case SGX_QL_ALG_ECDSA_P256:
     default:

@@ -40,6 +40,7 @@
 #include "se_memcpy.h"
 #include "sgx_ql_lib_common.h"
 #include <cstdio>
+#include <cctype>
 #include <regex>
 
 static bool qcnl_verbose_debug_enabled() {
@@ -49,6 +50,39 @@ static bool qcnl_verbose_debug_enabled() {
     const char *value = getenv("TDX_MLDSA_VERBOSE_DEBUG");
 #endif
     return value != NULL && strcmp(value, "1") == 0;
+}
+
+static bool get_qeid_override_hex(std::string &out_hex, uint32_t expected_bytes) {
+#ifndef _MSC_VER
+    const char *value = secure_getenv("TDX_MLDSA_PCKCERT_QEID_OVERRIDE");
+#else
+    const char *value = getenv("TDX_MLDSA_PCKCERT_QEID_OVERRIDE");
+#endif
+    if (value == NULL || value[0] == '\0') {
+        return false;
+    }
+
+    std::string candidate(value);
+    if (candidate.size() != expected_bytes * 2) {
+        qcnl_log(SGX_QL_LOG_ERROR,
+                 "[QCNL] Ignoring QEID override due to unexpected hex length: got=%zu expected=%u\n",
+                 candidate.size(),
+                 expected_bytes * 2);
+        return false;
+    }
+
+    for (char &ch : candidate) {
+        unsigned char uch = static_cast<unsigned char>(ch);
+        if (!std::isxdigit(uch)) {
+            qcnl_log(SGX_QL_LOG_ERROR,
+                     "[QCNL] Ignoring QEID override because it is not valid hex\n");
+            return false;
+        }
+        ch = static_cast<char>(std::toupper(uch));
+    }
+
+    out_hex = candidate;
+    return true;
 }
 
 #define QCNL_VERBOSE_DEBUG(...)            \
@@ -230,6 +264,7 @@ string CertificationService::get_custom_param_string() {
 
 sgx_qcnl_error_t CertificationService::build_pckcert_options(Request &request, const sgx_ql_pck_cert_id_t *p_pck_cert_id) {
     sgx_qcnl_error_t ret = SGX_QCNL_UNEXPECTED_ERROR;
+    std::string qeid_override_hex;
     request.endpoint = QcnlConfig::Instance()->getServerUrl();
     qcnl_log(SGX_QL_LOG_INFO,
              "[QCNL] build_pckcert_options server_url='%s' qe3_size=%u enc_ppid_size=%u pce_id=0x%04x crypto_suite=%u\n",
@@ -247,11 +282,20 @@ sgx_qcnl_error_t CertificationService::build_pckcert_options(Request &request, c
 
     // Append QE ID
     request.params.append("pckcert?qeid=");
-    if (!concat_string_with_hex_buf(request.params, p_pck_cert_id->p_qe3_id, p_pck_cert_id->qe3_id_size)) {
-        qcnl_log(SGX_QL_LOG_ERROR, "[QCNL] build_pckcert_options failed while appending qeid\n");
-        QCNL_VERBOSE_DEBUG("[qcnl-debug] build_pckcert_options failed while appending qeid\n");
-        fflush(stderr);
-        return ret;
+    if (get_qeid_override_hex(qeid_override_hex, p_pck_cert_id->qe3_id_size)) {
+        request.params.append(qeid_override_hex);
+        qcnl_log(SGX_QL_LOG_INFO,
+                 "[QCNL] build_pckcert_options using QEID override %s\n",
+                 qeid_override_hex.c_str());
+        QCNL_VERBOSE_DEBUG("[qcnl-debug] build_pckcert_options using QEID override %s\n",
+                           qeid_override_hex.c_str());
+    } else {
+        if (!concat_string_with_hex_buf(request.params, p_pck_cert_id->p_qe3_id, p_pck_cert_id->qe3_id_size)) {
+            qcnl_log(SGX_QL_LOG_ERROR, "[QCNL] build_pckcert_options failed while appending qeid\n");
+            QCNL_VERBOSE_DEBUG("[qcnl-debug] build_pckcert_options failed while appending qeid\n");
+            fflush(stderr);
+            return ret;
+        }
     }
 
     // Append encrypted PPID

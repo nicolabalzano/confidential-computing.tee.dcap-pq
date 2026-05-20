@@ -44,6 +44,42 @@
 #include "sgx_default_quote_provider.h"
 #endif
 
+quote3_error_t sgx_dcap_retrieve_quote_config(
+    const sgx_ql_pck_cert_id_t *p_pck_cert_id,
+    sgx_ql_config_t **pp_quote_config)
+{
+    if (p_pck_cert_id == NULL || pp_quote_config == NULL || *pp_quote_config != NULL) {
+        return SGX_QL_ERROR_INVALID_PARAMETER;
+    }
+
+#ifndef GEN_STATIC
+    if (!sgx_dcap_load_qpl() || !p_sgx_ql_get_quote_config) {
+        return SGX_QL_PLATFORM_LIB_UNAVAILABLE;
+    }
+
+    return p_sgx_ql_get_quote_config(p_pck_cert_id, pp_quote_config);
+#else
+    return sgx_ql_get_quote_config(p_pck_cert_id, pp_quote_config);
+#endif
+}
+
+quote3_error_t sgx_dcap_free_quote_config(sgx_ql_config_t *p_quote_config)
+{
+    if (p_quote_config == NULL) {
+        return SGX_QL_ERROR_INVALID_PARAMETER;
+    }
+
+#ifndef GEN_STATIC
+    if (!sgx_dcap_load_qpl() || !p_sgx_ql_free_quote_config) {
+        return SGX_QL_PLATFORM_LIB_UNAVAILABLE;
+    }
+
+    return p_sgx_ql_free_quote_config(p_quote_config);
+#else
+    return sgx_ql_free_quote_config(p_quote_config);
+#endif
+}
+
 /**
  * Dynamically load sgx_ql_get_quote_verification_collateral symbol and call it.
  *

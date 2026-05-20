@@ -72,6 +72,54 @@ extern "C" sgx_status_t sgx_get_metadata(const TCHAR* enclave_file, metadata_t *
 extern "C" sgx_status_t sgx_get_metadata(const char* enclave_file, metadata_t *metadata);
 #define PCE_ENCLAVE_NAME "libsgx_pce.signed.so.1"
 #define PCE_ENCLAVE_NAME_LEGACY "libsgx_pce.signed.so"
+
+static bool is_regular_or_symlink(const char *path)
+{
+    struct stat info;
+    if (path == NULL || path[0] == '\0') {
+        return false;
+    }
+    if (stat(path, &info) != 0) {
+        return false;
+    }
+    return ((info.st_mode & S_IFREG) != 0) || ((info.st_mode & S_IFLNK) != 0);
+}
+
+static bool try_copy_path(char *dest, size_t dest_size, const char *src)
+{
+    if (dest == NULL || dest_size == 0 || src == NULL) {
+        return false;
+    }
+    if (strnlen(src, dest_size) >= dest_size) {
+        return false;
+    }
+    strncpy(dest, src, dest_size - 1);
+    dest[dest_size - 1] = '\0';
+    return true;
+}
+
+static bool get_system_pce_path(char *p_file_path, size_t buf_size)
+{
+    static const char *kSystemCandidates[] = {
+        "/lib/x86_64-linux-gnu/" PCE_ENCLAVE_NAME,
+        "/usr/lib/x86_64-linux-gnu/" PCE_ENCLAVE_NAME,
+        "/lib64/" PCE_ENCLAVE_NAME,
+        "/usr/lib64/" PCE_ENCLAVE_NAME,
+        "/lib/x86_64-linux-gnu/" PCE_ENCLAVE_NAME_LEGACY,
+        "/usr/lib/x86_64-linux-gnu/" PCE_ENCLAVE_NAME_LEGACY,
+        "/lib64/" PCE_ENCLAVE_NAME_LEGACY,
+        "/usr/lib64/" PCE_ENCLAVE_NAME_LEGACY,
+    };
+
+    for (size_t i = 0; i < sizeof(kSystemCandidates) / sizeof(kSystemCandidates[0]); ++i) {
+        if (is_regular_or_symlink(kSystemCandidates[i]) &&
+            try_copy_path(p_file_path, buf_size, kSystemCandidates[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool get_pce_path(
     char *p_file_path,
     size_t buf_size)
@@ -115,15 +163,16 @@ bool get_pce_path(
     if(strnlen(p_file_path,buf_size)+strnlen(PCE_ENCLAVE_NAME,buf_size)+sizeof(char)>buf_size)
         return false;
     (void)strncat(p_file_path,PCE_ENCLAVE_NAME, strnlen(PCE_ENCLAVE_NAME,buf_size));
-    struct stat info;
-    if(stat(p_file_path, &info) != 0 ||
-        ((info.st_mode & S_IFREG) == 0 && (info.st_mode & S_IFLNK) == 0)) {
+    if(!is_regular_or_symlink(p_file_path)) {
         if ( p_last_slash != NULL )
         {
             *p_last_slash = '\0';  //null terminate the string
         }
         else p_file_path[0] = '\0';
         (void)strncat(p_file_path,PCE_ENCLAVE_NAME_LEGACY, strnlen(PCE_ENCLAVE_NAME_LEGACY,buf_size));
+        if (!is_regular_or_symlink(p_file_path) && !get_system_pce_path(p_file_path, buf_size)) {
+            return false;
+        }
     }
     return true;
 }

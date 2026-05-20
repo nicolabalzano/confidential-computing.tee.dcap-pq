@@ -12,6 +12,7 @@
 #define sgx_qve_get_quote_supplemental_data_version sgx_qvl_get_quote_supplemental_data_version
 #define tee_qve_verify_quote_qvt tee_qvl_verify_quote_qvt
 #include "sgx_dcap_qv_internal.h"
+#include "sgx_dcap_pcs_com.h"
 #define memset_s(a,b,c,d) memset(a,c,d)
 #define memcpy_s(a,b,c,d) (memcpy(a,c,b) && 0)
 #define sgx_is_within_enclave(a,b) (1)
@@ -49,6 +50,8 @@
 #include <algorithm>
 #include <type_traits>
 #include <vector>
+#include "sgx_quote_3.h"
+#include "sgx_quote_4.h"
 #include "QuoteVerification/Quote.h"
 #include "PckParser/CrlStore.h"
 #include "CertVerification/CertificateChain.h"
@@ -118,6 +121,195 @@ static int SGXSSL_init(void)
 using namespace intel::sgx::dcap;
 using namespace intel::sgx::dcap::parser;
 using namespace intel::sgx::dcap::constants;
+
+static bool is_mldsa_quote_v4(const uint8_t *p_quote, uint32_t quote_size)
+{
+    if (p_quote == NULL || quote_size < sizeof(sgx_quote4_t)) {
+        return false;
+    }
+
+    const auto *quote = reinterpret_cast<const sgx_quote4_t *>(p_quote);
+    return quote->header.version == 4 &&
+           (quote->header.att_key_type == SGX_QL_ALG_MLDSA_65 ||
+            quote->header.att_key_type == SGX_QL_ALG_MLDSA_87);
+}
+
+static quote3_error_t extract_chain_from_mldsa_quote_v4_raw(const uint8_t *p_quote,
+                                                            uint32_t quote_size,
+                                                            uint32_t *p_pck_cert_chain_size,
+                                                            uint8_t **pp_pck_cert_chain)
+{
+    if (p_quote == NULL ||
+        quote_size < sizeof(sgx_quote4_t) ||
+        p_pck_cert_chain_size == NULL ||
+        pp_pck_cert_chain == NULL ||
+        *pp_pck_cert_chain != NULL) {
+        return SGX_QL_ERROR_INVALID_PARAMETER;
+    }
+
+    const auto *quote = reinterpret_cast<const sgx_quote4_t *>(p_quote);
+    if (quote->header.version != 4) {
+        return SGX_QL_QUOTE_FORMAT_UNSUPPORTED;
+    }
+
+    const bool is_mldsa_65 = quote->header.att_key_type == SGX_QL_ALG_MLDSA_65;
+    const bool is_mldsa_87 = quote->header.att_key_type == SGX_QL_ALG_MLDSA_87;
+    if (!is_mldsa_65 && !is_mldsa_87) {
+        return SGX_QL_QUOTE_FORMAT_UNSUPPORTED;
+    }
+
+    const uint32_t sig_data_len = quote->signature_data_len;
+    if (quote_size < sizeof(sgx_quote4_t) + sig_data_len) {
+        return SGX_QL_QUOTE_FORMAT_UNSUPPORTED;
+    }
+
+    const uint8_t *outer_cert_bytes = NULL;
+    if (is_mldsa_87) {
+        if (sig_data_len < sizeof(sgx_mldsa_87_sig_data_v4_t) + sizeof(sgx_ql_certification_data_t)) {
+            return SGX_QL_QUOTE_FORMAT_UNSUPPORTED;
+        }
+        const auto *sig_data = reinterpret_cast<const sgx_mldsa_87_sig_data_v4_t *>(quote->signature_data);
+        outer_cert_bytes = sig_data->certification_data;
+    } else {
+        if (sig_data_len < sizeof(sgx_mldsa_65_sig_data_v4_t) + sizeof(sgx_ql_certification_data_t)) {
+            return SGX_QL_QUOTE_FORMAT_UNSUPPORTED;
+        }
+        const auto *sig_data = reinterpret_cast<const sgx_mldsa_65_sig_data_v4_t *>(quote->signature_data);
+        outer_cert_bytes = sig_data->certification_data;
+    }
+
+    const auto *outer_cert = reinterpret_cast<const sgx_ql_certification_data_t *>(outer_cert_bytes);
+    const size_t outer_cert_total_size =
+        sizeof(outer_cert->cert_key_type) + sizeof(outer_cert->size) + outer_cert->size;
+    if (outer_cert_total_size > sig_data_len) {
+        return SGX_QL_QUOTE_FORMAT_UNSUPPORTED;
+    }
+
+    if (outer_cert->cert_key_type != PCK_ID_QE_REPORT_CERTIFICATION_DATA) {
+        return SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED;
+    }
+
+    if (outer_cert->size < sizeof(sgx_qe_report_certification_data_t) + sizeof(sgx_ql_auth_data_t)) {
+        return SGX_QL_QUOTE_FORMAT_UNSUPPORTED;
+    }
+
+    const auto *qe_cert = reinterpret_cast<const sgx_qe_report_certification_data_t *>(outer_cert->certification_data);
+    const uint8_t *outer_cert_end = outer_cert->certification_data + outer_cert->size;
+    const uint8_t *auth_ptr = qe_cert->auth_certification_data;
+    if (auth_ptr + sizeof(sgx_ql_auth_data_t) > outer_cert_end) {
+        return SGX_QL_QUOTE_FORMAT_UNSUPPORTED;
+    }
+
+    const auto *qe_auth = reinterpret_cast<const sgx_ql_auth_data_t *>(auth_ptr);
+    const uint8_t *qe_auth_end = qe_auth->auth_data + qe_auth->size;
+    if (qe_auth_end + sizeof(sgx_ql_certification_data_t) > outer_cert_end) {
+        return SGX_QL_QUOTE_FORMAT_UNSUPPORTED;
+    }
+
+    const auto *inner_cert = reinterpret_cast<const sgx_ql_certification_data_t *>(qe_auth_end);
+    const size_t inner_cert_total_size =
+        sizeof(inner_cert->cert_key_type) + sizeof(inner_cert->size) + inner_cert->size;
+    if (qe_auth_end + inner_cert_total_size > outer_cert_end) {
+        return SGX_QL_QUOTE_FORMAT_UNSUPPORTED;
+    }
+
+    if (inner_cert->cert_key_type != QUOTE_CERT_TYPE || inner_cert->size == 0) {
+        return SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED;
+    }
+
+    *p_pck_cert_chain_size = inner_cert->size;
+    *pp_pck_cert_chain = (uint8_t *)malloc(1 + *p_pck_cert_chain_size);
+    if (*pp_pck_cert_chain == NULL) {
+        return SGX_QL_ERROR_OUT_OF_MEMORY;
+    }
+
+    std::memcpy(*pp_pck_cert_chain, inner_cert->certification_data, *p_pck_cert_chain_size);
+    (*pp_pck_cert_chain)[*p_pck_cert_chain_size] = '\0';
+    return SGX_QL_SUCCESS;
+}
+
+static quote3_error_t extract_chain_via_quote_config(const Quote& quote,
+                                                     const CertificationData& quoteCertificationData,
+                                                     uint32_t* p_pck_cert_chain_size,
+                                                     uint8_t** pp_pck_cert_chain) {
+#ifdef SGX_TRUSTED
+    (void)quote;
+    (void)quoteCertificationData;
+    (void)p_pck_cert_chain_size;
+    (void)pp_pck_cert_chain;
+    return SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED;
+#else
+    if (quoteCertificationData.type != PPID_RSA3072_ENCRYPTED ||
+        quoteCertificationData.parsedDataSize != sizeof(sgx_ql_ppid_rsa3072_encrypted_cert_info_t) ||
+        quoteCertificationData.data.size() != sizeof(sgx_ql_ppid_rsa3072_encrypted_cert_info_t)) {
+        return SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED;
+    }
+
+    const auto *cert_info =
+        reinterpret_cast<const sgx_ql_ppid_rsa3072_encrypted_cert_info_t *>(quoteCertificationData.data.data());
+    sgx_ql_qe3_id_t qe3_id = {};
+    sgx_cpu_svn_t cpu_svn = cert_info->cpu_svn;
+    sgx_isv_svn_t pce_isv_svn = cert_info->pce_info.pce_isv_svn;
+    uint8_t encrypted_ppid[sizeof(cert_info->enc_ppid)] = {};
+    sgx_ql_pck_cert_id_t pck_cert_id = {};
+    sgx_ql_config_t *quote_config = NULL;
+    quote3_error_t ret = SGX_QL_ERROR_UNEXPECTED;
+
+    if (quote.getHeader().userData.size() < sizeof(qe3_id.id)) {
+        return SGX_QL_ATT_KEY_CERT_DATA_INVALID;
+    }
+
+    memcpy(qe3_id.id, quote.getHeader().userData.data(), sizeof(qe3_id.id));
+    memcpy(encrypted_ppid, cert_info->enc_ppid, sizeof(encrypted_ppid));
+
+    pck_cert_id.p_qe3_id = qe3_id.id;
+    pck_cert_id.qe3_id_size = sizeof(qe3_id.id);
+    pck_cert_id.p_platform_cpu_svn = &cpu_svn;
+    pck_cert_id.p_platform_pce_isv_svn = &pce_isv_svn;
+    pck_cert_id.p_encrypted_ppid = encrypted_ppid;
+    pck_cert_id.encrypted_ppid_size = static_cast<uint32_t>(sizeof(encrypted_ppid));
+    pck_cert_id.crypto_suite = PCE_ALG_RSA_OAEP_3072;
+    pck_cert_id.pce_id = cert_info->pce_info.pce_id;
+
+    QV_VERBOSE_DEBUG("[qv-debug] extract_chain_via_quote_config: qe_id=%02x%02x%02x%02x cert_type=%u pce_id=0x%04x\n",
+                     qe3_id.id[0], qe3_id.id[1], qe3_id.id[2], qe3_id.id[3],
+                     static_cast<unsigned>(quoteCertificationData.type),
+                     static_cast<unsigned>(pck_cert_id.pce_id));
+
+    ret = sgx_dcap_retrieve_quote_config(&pck_cert_id, &quote_config);
+    QV_VERBOSE_DEBUG("[qv-debug] extract_chain_via_quote_config: sgx_dcap_retrieve_quote_config ret=0x%x config=%p\n",
+                     static_cast<unsigned>(ret),
+                     quote_config);
+    if (ret != SGX_QL_SUCCESS) {
+        goto cleanup;
+    }
+
+    if (quote_config == NULL || quote_config->p_cert_data == NULL || quote_config->cert_data_size == 0) {
+        ret = SGX_QL_ATT_KEY_CERT_DATA_INVALID;
+        goto cleanup;
+    }
+
+    *p_pck_cert_chain_size = quote_config->cert_data_size;
+    *pp_pck_cert_chain = (uint8_t*)malloc(1 + *p_pck_cert_chain_size);
+    if (*pp_pck_cert_chain == NULL) {
+        ret = SGX_QL_ERROR_OUT_OF_MEMORY;
+        goto cleanup;
+    }
+
+    memcpy(*pp_pck_cert_chain, quote_config->p_cert_data, *p_pck_cert_chain_size);
+    (*pp_pck_cert_chain)[*p_pck_cert_chain_size] = '\0';
+    ret = SGX_QL_SUCCESS;
+
+cleanup:
+    if (quote_config != NULL) {
+        quote3_error_t free_ret = sgx_dcap_free_quote_config(quote_config);
+        if (ret == SGX_QL_SUCCESS && free_ret != SGX_QL_SUCCESS) {
+            ret = free_ret;
+        }
+    }
+    return ret;
+#endif
+}
 
 //Intel Root Public Key
 //
@@ -479,6 +671,21 @@ static quote3_error_t extract_chain_from_quote(const uint8_t *p_quote,
     quote3_error_t ret = SGX_QL_ERROR_UNEXPECTED;
     uint16_t p_pck_cert_chain_type = 0;
     do {
+        if (is_mldsa_quote_v4(p_quote, quote_size)) {
+            ret = extract_chain_from_mldsa_quote_v4_raw(
+                p_quote,
+                quote_size,
+                p_pck_cert_chain_size,
+                pp_pck_cert_chain);
+            QV_VERBOSE_DEBUG("[qv-debug] extract_chain_from_quote: raw ML-DSA v4 fallback ret=0x%x chain_size=%u ptr=%p\n",
+                             static_cast<unsigned>(ret),
+                             p_pck_cert_chain_size != NULL ? *p_pck_cert_chain_size : 0,
+                             pp_pck_cert_chain != NULL ? *pp_pck_cert_chain : NULL);
+            if (ret == SGX_QL_SUCCESS) {
+                break;
+            }
+        }
+
         const std::vector<uint8_t> vecQuote(p_quote, p_quote + quote_size);
         Quote quote;
 
@@ -503,27 +710,26 @@ static quote3_error_t extract_chain_from_quote(const uint8_t *p_quote,
             break;
         }
 
-        //verify quote format, allocate memory for certification data, then fill it with the certification data from the quote
-        //sgxAttestationGetQECertificationDataSize doesn't calculate the value with '\0',
-        //hence we need to allocate p_pck_cert_chain_size + 1 (+1 for '\0')
-        //
-        *pp_pck_cert_chain = (uint8_t*)malloc(1 + *p_pck_cert_chain_size);
-        if (*pp_pck_cert_chain == NULL) {
-            ret = SGX_QL_ERROR_OUT_OF_MEMORY;
+        if (p_pck_cert_chain_type == QUOTE_CERT_TYPE) {
+            //verify quote format, allocate memory for certification data, then fill it with the certification data from the quote
+            //sgxAttestationGetQECertificationDataSize doesn't calculate the value with '\0',
+            //hence we need to allocate p_pck_cert_chain_size + 1 (+1 for '\0')
+            //
+            *pp_pck_cert_chain = (uint8_t*)malloc(1 + *p_pck_cert_chain_size);
+            if (*pp_pck_cert_chain == NULL) {
+                ret = SGX_QL_ERROR_OUT_OF_MEMORY;
+                break;
+            }
+
+            std::copy(std::begin(quoteCertificationData.data), std::end(quoteCertificationData.data), *pp_pck_cert_chain);
+            (*pp_pck_cert_chain)[(*p_pck_cert_chain_size)] = '\0';
+            ret = SGX_QL_SUCCESS;
             break;
         }
 
-        std::copy(std::begin(quoteCertificationData.data), std::end(quoteCertificationData.data), *pp_pck_cert_chain);
-        (*pp_pck_cert_chain)[(*p_pck_cert_chain_size)] = '\0';
-
-        //validate quote certification type
-        //
-        if (p_pck_cert_chain_type != QUOTE_CERT_TYPE) {
-            ret = SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED;
-            break;
-        }
-
-        ret = SGX_QL_SUCCESS;
+        QV_VERBOSE_DEBUG("[qv-debug] extract_chain_from_quote: attempting quote-config fallback for cert_type=%u\n",
+                         static_cast<unsigned>(p_pck_cert_chain_type));
+        ret = extract_chain_via_quote_config(quote, quoteCertificationData, p_pck_cert_chain_size, pp_pck_cert_chain);
     } while (0);
 
     if (ret != SGX_QL_SUCCESS) {
@@ -536,7 +742,7 @@ static quote3_error_t extract_chain_from_quote(const uint8_t *p_quote,
 }
 
 /**
- * Extract FMSPc and CA from a given quote with cert type 5.
+ * Extract FMSPc and CA from a given quote.
  * @param p_quote[IN] - Pointer to a quote buffer.
  * @param quote_size[IN] - Size of input quote buffer.
  * @param p_fmsp_from_quote[OUT] - Pointer to a buffer to write fmsp to.

@@ -116,6 +116,17 @@ static const tdx_uuid_t g_intel_tdqe_ecdsa_uuid = {TDX_SGX_ECDSA_ATTESTATION_ID}
 static const tdx_uuid_t g_intel_tdqe_mldsa_65_uuid = {TDX_SGX_MLDSA_65_ATTESTATION_ID};
 static const tdx_uuid_t g_intel_tdqe_mldsa_87_uuid = {TDX_SGX_MLDSA_87_ATTESTATION_ID};
 
+typedef struct _tdx_quote_header_prefix_t {
+    uint16_t version;
+    uint16_t att_key_type;
+} tdx_quote_header_prefix_t;
+
+enum {
+    TDX_ATTEST_QUOTE_ALG_ECDSA_P256 = 2,
+    TDX_ATTEST_QUOTE_ALG_MLDSA_65 = 5,
+    TDX_ATTEST_QUOTE_ALG_MLDSA_87 = 6
+};
+
 static int direct_trace_enabled(void)
 {
     const char *value = secure_getenv("TDX_ATTEST_TRACE_DIRECT");
@@ -156,10 +167,66 @@ static void trace_uuid_list(const char *label, const tdx_uuid_t *p_att_key_id_li
     }
 }
 
+static int infer_att_key_id_from_quote(
+    const uint8_t *p_quote,
+    uint32_t quote_size,
+    tdx_uuid_t *p_selected_att_key_id)
+{
+    const tdx_quote_header_prefix_t *p_header = NULL;
+
+    if (p_quote == NULL || p_selected_att_key_id == NULL || quote_size < sizeof(*p_header)) {
+        return 0;
+    }
+
+    p_header = (const tdx_quote_header_prefix_t *)p_quote;
+    switch (p_header->att_key_type) {
+    case TDX_ATTEST_QUOTE_ALG_ECDSA_P256:
+        *p_selected_att_key_id = g_intel_tdqe_ecdsa_uuid;
+        return 1;
+    case TDX_ATTEST_QUOTE_ALG_MLDSA_65:
+        *p_selected_att_key_id = g_intel_tdqe_mldsa_65_uuid;
+        return 1;
+    case TDX_ATTEST_QUOTE_ALG_MLDSA_87:
+        *p_selected_att_key_id = g_intel_tdqe_mldsa_87_uuid;
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 static int local_qgs_forced(void)
 {
     const char *value = secure_getenv(TDX_ATTEST_FORCE_LOCAL_QGS_ENV);
     return value != NULL && value[0] != '\0' && value[0] != '0';
+}
+
+static int mldsa_full_dcap_required(void)
+{
+    const char *value = secure_getenv("TDX_MLDSA_REQUIRE_FULL_DCAP");
+    return value != NULL && value[0] != '\0' && value[0] != '0';
+}
+
+static int uuid_list_requests_mldsa(const tdx_uuid_t *p_att_key_id_list, uint32_t list_size)
+{
+    uint32_t i = 0;
+
+    if (p_att_key_id_list == NULL || list_size == 0) {
+        return 0;
+    }
+
+    for (i = 0; i < list_size; ++i) {
+        if (memcmp(&p_att_key_id_list[i], &g_intel_tdqe_mldsa_65_uuid, sizeof(g_intel_tdqe_mldsa_65_uuid)) == 0 ||
+            memcmp(&p_att_key_id_list[i], &g_intel_tdqe_mldsa_87_uuid, sizeof(g_intel_tdqe_mldsa_87_uuid)) == 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int refuse_mldsa_quote_fallback(const tdx_uuid_t *p_att_key_id_list, uint32_t list_size)
+{
+    return mldsa_full_dcap_required() && uuid_list_requests_mldsa(p_att_key_id_list, list_size);
 }
 
 static const char *get_local_qgs_socket_path(void)
@@ -729,6 +796,18 @@ static tdx_attest_error_t extract_quote_from_blob_payload(
         return TDX_ATTEST_ERROR_OUT_OF_MEMORY;
     }
     memcpy(*pp_quote, p_quote, quote_size);
+
+    if (p_selected_att_key_id) {
+        tdx_uuid_t inferred_att_key_id = {};
+        if (infer_att_key_id_from_quote(*pp_quote, quote_size, &inferred_att_key_id)) {
+            if (direct_trace_enabled() &&
+                memcmp(p_selected_att_key_id, &inferred_att_key_id, sizeof(inferred_att_key_id)) != 0) {
+                trace_uuid_bytes("extract_quote_from_blob_payload inferred_from_quote=", inferred_att_key_id.d, sizeof(inferred_att_key_id.d));
+            }
+            *p_selected_att_key_id = inferred_att_key_id;
+        }
+    }
+
     if (p_quote_size) {
         *p_quote_size = quote_size;
     }
@@ -955,6 +1034,8 @@ tdx_attest_error_t tdx_att_get_quote(
     uint32_t flags)
 {
     tdx_attest_error_t ret = TDX_ATTEST_ERROR_UNEXPECTED;
+    const int require_remote_mldsa_quote =
+        refuse_mldsa_quote_fallback(p_att_key_id_list, list_size);
 
     if ((!p_att_key_id_list && list_size) ||
         (p_att_key_id_list && !list_size)) {
@@ -1025,6 +1106,12 @@ tdx_attest_error_t tdx_att_get_quote(
             fprintf(stderr, "[tdx-attest-trace] quote transport=vsock\n");
         }
         ret = extract_quote_from_blob_payload((uint8_t*)p_get_quote_blob->data, payload_body_size, p_att_key_id, pp_quote, p_quote_size);
+    }
+    if (require_remote_mldsa_quote && TDX_ATTEST_SUCCESS != ret) {
+        if (direct_trace_enabled()) {
+            fprintf(stderr, "[tdx-attest-trace] refusing non-vsock fallback for ML-DSA full DCAP ret=0x%x\n", ret);
+        }
+        goto ret_point;
     }
     if (TDX_ATTEST_SUCCESS == ret || TDX_ATTEST_ERROR_NOT_SUPPORTED != ret) {
         goto ret_point;

@@ -62,6 +62,8 @@ se_mutex_t g_urts_mutex;
 
 sgx_get_quote_verification_collateral_func_t p_sgx_ql_get_quote_verification_collateral = NULL;
 sgx_free_quote_verification_collateral_func_t p_sgx_ql_free_quote_verification_collateral = NULL;
+sgx_get_quote_config_func_t p_sgx_ql_get_quote_config = NULL;
+sgx_free_quote_config_func_t p_sgx_ql_free_quote_config = NULL;
 
 sgx_ql_get_qve_identity_func_t p_sgx_ql_get_qve_identity = NULL;
 sgx_ql_free_qve_identity_func_t p_sgx_ql_free_qve_identity = NULL;
@@ -100,6 +102,7 @@ bool sgx_dcap_load_qpl()
     //
     if (g_qpl_handle &&
             p_sgx_ql_get_quote_verification_collateral && p_sgx_ql_free_quote_verification_collateral &&
+            p_sgx_ql_get_quote_config && p_sgx_ql_free_quote_config &&
             p_sgx_ql_get_qve_identity && p_sgx_ql_free_qve_identity &&
             p_sgx_ql_get_root_ca_crl && p_sgx_ql_free_root_ca_crl) {
 
@@ -130,6 +133,18 @@ bool sgx_dcap_load_qpl()
                 SE_TRACE(SE_TRACE_ERROR, "Error returned from the sgx_qpl_global_init API. 0x%04x\n", ql_ret);
                 break;
 	    }
+        }
+
+        p_sgx_ql_get_quote_config = (sgx_get_quote_config_func_t)GetProcAddress(g_qpl_handle, QL_API_GET_QUOTE_CONFIG);
+        if (p_sgx_ql_get_quote_config == NULL) {
+            SE_TRACE(SE_TRACE_ERROR, "Couldn't locate %s in Quote Provider library %s.\n", QL_API_GET_QUOTE_CONFIG, SGX_QL_QUOTE_CONFIG_LIB_FILE_NAME);
+            break;
+        }
+
+        p_sgx_ql_free_quote_config = (sgx_free_quote_config_func_t)GetProcAddress(g_qpl_handle, QL_API_FREE_QUOTE_CONFIG);
+        if (p_sgx_ql_free_quote_config == NULL) {
+            SE_TRACE(SE_TRACE_ERROR, "Couldn't locate %s in Quote Provider library %s.\n", QL_API_FREE_QUOTE_CONFIG, SGX_QL_QUOTE_CONFIG_LIB_FILE_NAME);
+            break;
         }
 
         //search for sgx_ql_get_quote_verification_collateral symbol in dcap_quoteprov library

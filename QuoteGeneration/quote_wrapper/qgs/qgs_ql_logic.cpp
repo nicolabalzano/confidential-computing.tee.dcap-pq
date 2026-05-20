@@ -35,6 +35,8 @@
 #include "qgs_msg_lib.h"
 #include "se_trace.h"
 #include "sgx_ql_lib_common.h"
+#include "../common/inc/sgx_quote_3.h"
+#include "../common/inc/sgx_quote_4.h"
 #include "td_ql_wrapper.h"
 #include "tdx_attest.h"
 #include <boost/thread.hpp>
@@ -125,6 +127,8 @@ boost::thread_specific_ptr<tee_att_config_t> ptr(cleanup);
 
 namespace intel { namespace sgx { namespace dcap { namespace qgs {
 
+    static constexpr uint16_t kQeReportCertificationDataType = 6;
+
     static const char *get_qgs_tdqe_path()
     {
         const char *configured_path = std::getenv("QGS_TDQE_PATH");
@@ -137,6 +141,111 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
     static bool is_tdx_uuid_equal(const tdx_uuid_t& lhs, const uint8_t *rhs)
     {
         return rhs != NULL && std::memcmp(lhs.d, rhs, sizeof(lhs.d)) == 0;
+    }
+
+    static bool is_mldsa_uuid(const tdx_uuid_t& value)
+    {
+        static const tdx_uuid_t kMldsa65Uuid = {TDX_SGX_MLDSA_65_ATTESTATION_ID};
+        static const tdx_uuid_t kMldsa87Uuid = {TDX_SGX_MLDSA_87_ATTESTATION_ID};
+        return std::memcmp(value.d, kMldsa65Uuid.d, sizeof(value.d)) == 0 ||
+               std::memcmp(value.d, kMldsa87Uuid.d, sizeof(value.d)) == 0;
+    }
+
+    static bool force_refresh_mldsa_request()
+    {
+        const char *value = std::getenv("TDX_MLDSA_FORCE_REFRESH_ON_QGS_REQUEST");
+        return value != NULL && std::strcmp(value, "1") == 0;
+    }
+
+    static bool require_full_dcap_mldsa_quote()
+    {
+        const char *value = std::getenv("TDX_MLDSA_REQUIRE_FULL_DCAP");
+        return value != NULL && std::strcmp(value, "1") == 0;
+    }
+
+    static uint32_t get_mldsa_sig_data_struct_size_for_algorithm(uint32_t algorithm_id)
+    {
+        switch (algorithm_id) {
+        case SGX_QL_ALG_MLDSA_87:
+            return static_cast<uint32_t>(sizeof(sgx_mldsa_87_sig_data_v4_t));
+        case SGX_QL_ALG_MLDSA_65:
+        default:
+            return static_cast<uint32_t>(sizeof(sgx_mldsa_65_sig_data_v4_t));
+        }
+    }
+
+    static uint32_t get_mldsa_algorithm_id_for_uuid(const tdx_uuid_t& value)
+    {
+        static const tdx_uuid_t kMldsa87Uuid = {TDX_SGX_MLDSA_87_ATTESTATION_ID};
+        if (std::memcmp(value.d, kMldsa87Uuid.d, sizeof(value.d)) == 0) {
+            return SGX_QL_ALG_MLDSA_87;
+        }
+        return SGX_QL_ALG_MLDSA_65;
+    }
+
+    static bool get_mldsa_quote_inner_cert_key_type(const uint8_t *p_quote,
+                                                    uint32_t quote_size,
+                                                    uint32_t algorithm_id,
+                                                    uint16_t *p_inner_cert_key_type)
+    {
+        const uint32_t fixed_sig_data_size = get_mldsa_sig_data_struct_size_for_algorithm(algorithm_id);
+        const uint32_t outer_cert_offset = static_cast<uint32_t>(sizeof(sgx_quote4_t)) + fixed_sig_data_size;
+        const uint32_t min_outer_cert_bytes =
+            outer_cert_offset +
+            static_cast<uint32_t>(sizeof(sgx_ql_certification_data_t)) +
+            static_cast<uint32_t>(sizeof(sgx_qe_report_certification_data_t)) +
+            static_cast<uint32_t>(sizeof(sgx_ql_auth_data_t)) +
+            static_cast<uint32_t>(sizeof(sgx_ql_certification_data_t));
+
+        if (p_inner_cert_key_type == NULL || p_quote == NULL || quote_size < min_outer_cert_bytes) {
+            return false;
+        }
+
+        const auto *p_quote_v4 = reinterpret_cast<const sgx_quote4_t *>(p_quote);
+        if (p_quote_v4->header.version != 4 || p_quote_v4->header.att_key_type != algorithm_id) {
+            return false;
+        }
+
+        const auto *p_outer_cert = reinterpret_cast<const sgx_ql_certification_data_t *>(
+            p_quote + outer_cert_offset);
+        if (p_outer_cert->cert_key_type != kQeReportCertificationDataType) {
+            return false;
+        }
+
+        const uint32_t outer_total_size =
+            static_cast<uint32_t>(sizeof(*p_outer_cert)) + p_outer_cert->size;
+        if (outer_cert_offset + outer_total_size > quote_size) {
+            return false;
+        }
+
+        if (p_outer_cert->size <
+            sizeof(sgx_qe_report_certification_data_t) + sizeof(sgx_ql_auth_data_t)) {
+            return false;
+        }
+
+        const auto *p_qe_cert = reinterpret_cast<const sgx_qe_report_certification_data_t *>(
+            p_outer_cert->certification_data);
+        const uint8_t *p_outer_end = p_outer_cert->certification_data + p_outer_cert->size;
+        const uint8_t *p_auth_ptr = p_qe_cert->auth_certification_data;
+        if (p_auth_ptr + sizeof(sgx_ql_auth_data_t) > p_outer_end) {
+            return false;
+        }
+
+        const auto *p_qe_auth = reinterpret_cast<const sgx_ql_auth_data_t *>(p_auth_ptr);
+        const uint8_t *p_qe_auth_end = p_qe_auth->auth_data + p_qe_auth->size;
+        if (p_qe_auth_end + sizeof(sgx_ql_certification_data_t) > p_outer_end) {
+            return false;
+        }
+
+        const auto *p_inner_cert = reinterpret_cast<const sgx_ql_certification_data_t *>(p_qe_auth_end);
+        const uint32_t inner_total_size =
+            static_cast<uint32_t>(sizeof(*p_inner_cert)) + p_inner_cert->size;
+        if (p_qe_auth_end + inner_total_size > p_outer_end) {
+            return false;
+        }
+
+        *p_inner_cert_key_type = p_inner_cert->cert_key_type;
+        return true;
     }
 
     static bool select_tdx_att_key_id_from_uuid_list(const uint8_t *p_id_list,
@@ -377,19 +486,38 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
                     sgx_target_info_t qe_target_info = {};
                     uint8_t hash[32] = {0};
                     size_t hash_size = sizeof(hash);
+                    const bool refresh_att_key =
+                        force_refresh_mldsa_request() && is_mldsa_uuid(selected_tdx_uuid);
+                    const bool retry_selected_context_init =
+                        is_mldsa_uuid(selected_tdx_uuid);
+                    const bool defer_selected_context_init_failure =
+                        is_mldsa_uuid(selected_tdx_uuid);
                     fprintf(stderr, "[qgs-debug] GET_QUOTE_REQ about to call tee_att_init_quote selected-context bootstrap\n");
                     fflush(stderr);
-                    tee_att_ret = tee_att_init_quote(ptr.get(), &qe_target_info, false, &hash_size, hash);
+                    tee_att_ret = tee_att_init_quote(ptr.get(),
+                                                     &qe_target_info,
+                                                     refresh_att_key,
+                                                     &hash_size,
+                                                     hash);
                     fprintf(stderr, "[qgs-debug] GET_QUOTE_REQ tee_att_init_quote selected-context ret=0x%x hash_size=%zu\n",
                             tee_att_ret, hash_size);
                     fflush(stderr);
-                    if (TEE_ATT_SUCCESS != tee_att_ret) {
-                        resp_error_code = QGS_MSG_ERROR_UNEXPECTED;
-                        QGS_LOG_ERROR("GET_QUOTE_REQ selected-context tee_att_init_quote return 0x%x\n", tee_att_ret);
-                        break;
+                    if (tee_att_ret == TEE_ATT_ATT_KEY_NOT_INITIALIZED && retry_selected_context_init) {
+                        QGS_LOG_WARN("GET_QUOTE_REQ selected-context tee_att_init_quote return 0x%x, retrying with refreshed attestation key\n",
+                                     tee_att_ret);
+                    } else if (TEE_ATT_SUCCESS != tee_att_ret) {
+                        if (defer_selected_context_init_failure) {
+                            QGS_LOG_WARN("GET_QUOTE_REQ selected-context tee_att_init_quote return 0x%x, deferring bootstrap failure to direct quote generation path\n",
+                                         tee_att_ret);
+                            tee_att_ret = TEE_ATT_SUCCESS;
+                        } else {
+                            resp_error_code = QGS_MSG_ERROR_UNEXPECTED;
+                            QGS_LOG_ERROR("GET_QUOTE_REQ selected-context tee_att_init_quote return 0x%x\n", tee_att_ret);
+                            break;
+                        }
                     }
                 }
-                int retry = 1;
+                int retry = (tee_att_ret == TEE_ATT_ATT_KEY_NOT_INITIALIZED) ? 0 : 1;
 
                 do {
                     if (retry == 0) {
@@ -433,8 +561,30 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
                             resp_error_code = QGS_MSG_ERROR_UNEXPECTED;
                             QGS_LOG_ERROR("tee_att_get_quote return 0x%x\n", tee_att_ret);
                         } else {
-                            resp_error_code = QGS_MSG_SUCCESS;
-                            QGS_LOG_INFO("tee_att_get_quote return Success\n");
+                            if (require_full_dcap_mldsa_quote() && is_mldsa_uuid(selected_tdx_uuid)) {
+                                uint16_t emitted_cert_key_type = 0;
+                                const uint32_t algorithm_id = get_mldsa_algorithm_id_for_uuid(selected_tdx_uuid);
+                                if (!get_mldsa_quote_inner_cert_key_type(quote_buf.data(),
+                                                                         size,
+                                                                         algorithm_id,
+                                                                         &emitted_cert_key_type)) {
+                                    resp_error_code = QGS_MSG_ERROR_UNEXPECTED;
+                                    QGS_LOG_ERROR("tee_att_get_quote returned an ML-DSA quote that could not be parsed for full-DCAP validation.\n");
+                                    tee_att_ret = TEE_ATT_ERROR_UNEXPECTED;
+                                } else if (emitted_cert_key_type != PCK_CERT_CHAIN) {
+                                    resp_error_code = QGS_MSG_ERROR_UNEXPECTED;
+                                    QGS_LOG_WARN("tee_att_get_quote returned ML-DSA certification key type %u, expected %u for full DCAP; refreshing attestation key.\n",
+                                                 emitted_cert_key_type,
+                                                 PCK_CERT_CHAIN);
+                                    tee_att_ret = TEE_ATT_ATT_KEY_NOT_INITIALIZED;
+                                } else {
+                                    resp_error_code = QGS_MSG_SUCCESS;
+                                    QGS_LOG_INFO("tee_att_get_quote return Success with ML-DSA PCK cert chain certification data\n");
+                                }
+                            } else {
+                                resp_error_code = QGS_MSG_SUCCESS;
+                                QGS_LOG_INFO("tee_att_get_quote return Success\n");
+                            }
                         }
                     }
                 // Only retry once when the return code is TEE_ATT_ATT_KEY_NOT_INITIALIZED

@@ -83,6 +83,24 @@ static const sgx_ql_att_key_id_t k_qgs_default_mldsa_65_att_key_id =
     SGX_QL_ALG_MLDSA_65
 };
 
+static const sgx_ql_att_key_id_t k_qgs_default_mldsa_44_att_key_id =
+{
+    0,
+    0,
+    32,
+    { 0x8c, 0x4f, 0x57, 0x75, 0xd7, 0x96, 0x50, 0x3e, 0x96, 0x13, 0x7f, 0x77, 0xc6, 0x8a, 0x82, 0x9a,
+      0x00, 0x56, 0xac, 0x8d, 0xed, 0x70, 0x14, 0x0b, 0x08, 0x1b, 0x09, 0x44, 0x90, 0xc5, 0x7b, 0xff,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    2,
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    SGX_QL_ALG_MLDSA_44
+};
+
 static const sgx_ql_att_key_id_t k_qgs_default_mldsa_87_att_key_id =
 {
     0,
@@ -145,9 +163,11 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
 
     static bool is_mldsa_uuid(const tdx_uuid_t& value)
     {
+        static const tdx_uuid_t kMldsa44Uuid = {TDX_SGX_MLDSA_44_ATTESTATION_ID};
         static const tdx_uuid_t kMldsa65Uuid = {TDX_SGX_MLDSA_65_ATTESTATION_ID};
         static const tdx_uuid_t kMldsa87Uuid = {TDX_SGX_MLDSA_87_ATTESTATION_ID};
-        return std::memcmp(value.d, kMldsa65Uuid.d, sizeof(value.d)) == 0 ||
+        return std::memcmp(value.d, kMldsa44Uuid.d, sizeof(value.d)) == 0 ||
+               std::memcmp(value.d, kMldsa65Uuid.d, sizeof(value.d)) == 0 ||
                std::memcmp(value.d, kMldsa87Uuid.d, sizeof(value.d)) == 0;
     }
 
@@ -166,6 +186,8 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
     static uint32_t get_mldsa_sig_data_struct_size_for_algorithm(uint32_t algorithm_id)
     {
         switch (algorithm_id) {
+        case SGX_QL_ALG_MLDSA_44:
+            return static_cast<uint32_t>(sizeof(sgx_mldsa_44_sig_data_v4_t));
         case SGX_QL_ALG_MLDSA_87:
             return static_cast<uint32_t>(sizeof(sgx_mldsa_87_sig_data_v4_t));
         case SGX_QL_ALG_MLDSA_65:
@@ -176,7 +198,11 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
 
     static uint32_t get_mldsa_algorithm_id_for_uuid(const tdx_uuid_t& value)
     {
+        static const tdx_uuid_t kMldsa44Uuid = {TDX_SGX_MLDSA_44_ATTESTATION_ID};
         static const tdx_uuid_t kMldsa87Uuid = {TDX_SGX_MLDSA_87_ATTESTATION_ID};
+        if (std::memcmp(value.d, kMldsa44Uuid.d, sizeof(value.d)) == 0) {
+            return SGX_QL_ALG_MLDSA_44;
+        }
         if (std::memcmp(value.d, kMldsa87Uuid.d, sizeof(value.d)) == 0) {
             return SGX_QL_ALG_MLDSA_87;
         }
@@ -254,6 +280,7 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
                                                      tdx_uuid_t *p_selected_uuid)
     {
         static const tdx_uuid_t kEcdsaUuid = {TDX_SGX_ECDSA_ATTESTATION_ID};
+        static const tdx_uuid_t kMldsa44Uuid = {TDX_SGX_MLDSA_44_ATTESTATION_ID};
         static const tdx_uuid_t kMldsa65Uuid = {TDX_SGX_MLDSA_65_ATTESTATION_ID};
         static const tdx_uuid_t kMldsa87Uuid = {TDX_SGX_MLDSA_87_ATTESTATION_ID};
         const uint32_t uuid_size = sizeof(tdx_uuid_t);
@@ -275,6 +302,15 @@ namespace intel { namespace sgx { namespace dcap { namespace qgs {
 
         for (uint32_t offset = 0; offset < id_list_size; offset += uuid_size) {
             const uint8_t *candidate = p_id_list + offset;
+            if (is_tdx_uuid_equal(kMldsa44Uuid, candidate)) {
+                if (std::memcpy(&p_selected_key_id->base,
+                                &k_qgs_default_mldsa_44_att_key_id,
+                                sizeof(k_qgs_default_mldsa_44_att_key_id)) == NULL) {
+                    return false;
+                }
+                *p_selected_uuid = kMldsa44Uuid;
+                return true;
+            }
             if (is_tdx_uuid_equal(kMldsa87Uuid, candidate)) {
                 if (std::memcpy(&p_selected_key_id->base,
                                 &k_qgs_default_mldsa_87_att_key_id,

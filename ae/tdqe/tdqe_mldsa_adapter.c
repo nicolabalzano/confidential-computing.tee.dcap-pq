@@ -29,6 +29,14 @@ typedef struct _tdqe_mldsa_backend_t {
 
 static const tdqe_mldsa_backend_t *get_mldsa_backend(uint32_t algorithm_id)
 {
+    static const tdqe_mldsa_backend_t mldsa44_backend = {
+        PQCP_MLDSA_NATIVE_MLDSA44_keypair_internal,
+        PQCP_MLDSA_NATIVE_MLDSA44_signature_internal,
+        PQCP_MLDSA_NATIVE_MLDSA44_verify_internal,
+        PQCP_MLDSA_NATIVE_MLDSA44_prepare_domain_separation_prefix,
+        SGX_QL_MLDSA_44_SIG_SIZE,
+        MLDSA44_RNDBYTES
+    };
     static const tdqe_mldsa_backend_t mldsa65_backend = {
         PQCP_MLDSA_NATIVE_MLDSA65_keypair_internal,
         PQCP_MLDSA_NATIVE_MLDSA65_signature_internal,
@@ -47,6 +55,8 @@ static const tdqe_mldsa_backend_t *get_mldsa_backend(uint32_t algorithm_id)
     };
 
     switch (algorithm_id) {
+    case SGX_QL_ALG_MLDSA_44:
+        return &mldsa44_backend;
     case SGX_QL_ALG_MLDSA_65:
         return &mldsa65_backend;
     case SGX_QL_ALG_MLDSA_87:
@@ -158,14 +168,29 @@ int tdqe_mldsa65_keygen(uint8_t *public_key, uint8_t *private_key, uint8_t *seed
     return tdqe_mldsa_keygen(SGX_QL_ALG_MLDSA_65, public_key, private_key, seed);
 }
 
+int tdqe_mldsa44_keygen(uint8_t *public_key, uint8_t *private_key, uint8_t *seed)
+{
+    return tdqe_mldsa_keygen(SGX_QL_ALG_MLDSA_44, public_key, private_key, seed);
+}
+
 int tdqe_mldsa65_sign(uint8_t *signature, const uint8_t *message, size_t message_len, const uint8_t *private_key)
 {
     return tdqe_mldsa_sign(SGX_QL_ALG_MLDSA_65, signature, message, message_len, private_key);
 }
 
+int tdqe_mldsa44_sign(uint8_t *signature, const uint8_t *message, size_t message_len, const uint8_t *private_key)
+{
+    return tdqe_mldsa_sign(SGX_QL_ALG_MLDSA_44, signature, message, message_len, private_key);
+}
+
 int tdqe_mldsa65_verify(const uint8_t *signature, const uint8_t *message, size_t message_len, const uint8_t *public_key)
 {
     return tdqe_mldsa_verify(SGX_QL_ALG_MLDSA_65, signature, message, message_len, public_key);
+}
+
+int tdqe_mldsa44_verify(const uint8_t *signature, const uint8_t *message, size_t message_len, const uint8_t *public_key)
+{
+    return tdqe_mldsa_verify(SGX_QL_ALG_MLDSA_44, signature, message, message_len, public_key);
 }
 
 int tdqe_mldsa87_keygen(uint8_t *public_key, uint8_t *private_key, uint8_t *seed)

@@ -31,6 +31,7 @@ extern "C" void ocall_debug_message(const char *msg)
     #define TEE_ATT_QUOTE_CONFIG_LIB_FILE_NAME _T("dcap_quoteprov.dll")
 #endif
 #define ECDSA_BLOB_LABEL "tdqe_data.blob"
+#define MLDSA_44_BLOB_LABEL "tdqe_data_mldsa_44.blob"
 #define MLDSA_65_BLOB_LABEL "tdqe_data_mldsa_65.blob"
 #define MLDSA_87_BLOB_LABEL "tdqe_data_mldsa_87.blob"
 
@@ -44,6 +45,8 @@ static const char* get_blob_label_for_algorithm(uint32_t algorithm_id)
 {
     switch (algorithm_id)
     {
+    case SGX_QL_ALG_MLDSA_44:
+        return MLDSA_44_BLOB_LABEL;
     case SGX_QL_ALG_MLDSA_87:
         return MLDSA_87_BLOB_LABEL;
     case SGX_QL_ALG_MLDSA_65:
@@ -58,6 +61,8 @@ static uint32_t get_tdqe_blob_size_for_algorithm(uint32_t algorithm_id)
 {
     switch (algorithm_id)
     {
+    case SGX_QL_ALG_MLDSA_44:
+        return SGX_QL_TRUSTED_MLDSA_44_BLOB_SIZE_SDK;
     case SGX_QL_ALG_MLDSA_87:
         return SGX_QL_TRUSTED_MLDSA_87_BLOB_SIZE_SDK;
     case SGX_QL_ALG_MLDSA_65:
@@ -72,6 +77,8 @@ static uint32_t get_mldsa_sig_data_struct_size_for_algorithm(uint32_t algorithm_
 {
     switch (algorithm_id)
     {
+    case SGX_QL_ALG_MLDSA_44:
+        return (uint32_t)sizeof(sgx_mldsa_44_sig_data_v4_t);
     case SGX_QL_ALG_MLDSA_87:
         return (uint32_t)sizeof(sgx_mldsa_87_sig_data_v4_t);
     case SGX_QL_ALG_MLDSA_65:
@@ -273,6 +280,7 @@ static bool get_tdqe_blob_plaintext_view(const uint8_t *p_blob,
     }
 
     if ((blob_size != SGX_QL_TRUSTED_ECDSA_BLOB_SIZE_SDK) &&
+        (blob_size != SGX_QL_TRUSTED_MLDSA_44_BLOB_SIZE_SDK) &&
         (blob_size != SGX_QL_TRUSTED_MLDSA_65_BLOB_SIZE_SDK) &&
         (blob_size != SGX_QL_TRUSTED_MLDSA_87_BLOB_SIZE_SDK)) {
         return false;
@@ -296,6 +304,22 @@ static bool get_tdqe_blob_plaintext_view(const uint8_t *p_blob,
         p_view->pce_target_info = &p_ecdsa->pce_target_info;
         p_view->qe_report = &p_ecdsa->qe_report;
         p_view->qe_id = &p_ecdsa->qe_id;
+        return true;
+    }
+
+    if (p_view->seal_blob_type == SGX_QL_SEAL_MLDSA_44_KEY_BLOB) {
+        const ref_plaintext_mldsa_44_data_sdk_t *p_mldsa =
+            reinterpret_cast<const ref_plaintext_mldsa_44_data_sdk_t *>(p_plaintext);
+        p_view->certification_key_type = &p_mldsa->certification_key_type;
+        p_view->cert_qe_isv_svn = &p_mldsa->cert_qe_isv_svn;
+        p_view->cert_cpu_svn = &p_mldsa->cert_cpu_svn;
+        p_view->cert_pce_info = &p_mldsa->cert_pce_info;
+        p_view->raw_cpu_svn = &p_mldsa->raw_cpu_svn;
+        p_view->raw_pce_info = &p_mldsa->raw_pce_info;
+        p_view->signature_scheme = &p_mldsa->signature_scheme;
+        p_view->pce_target_info = &p_mldsa->pce_target_info;
+        p_view->qe_report = &p_mldsa->qe_report;
+        p_view->qe_id = &p_mldsa->qe_id;
         return true;
     }
 
@@ -1291,6 +1315,7 @@ tee_att_error_t tee_att_config_t::certify_key(uint8_t *p_ecdsa_blob,
     sgx_ec256_signature_t pce_sig;
     const uint32_t tdqe_blob_size = get_tdqe_blob_size_for_algorithm(m_att_key_algorithm_id);
     ref_plaintext_ecdsa_data_sdk_t *p_plaintext_ecdsa = NULL;
+    ref_plaintext_mldsa_44_data_sdk_t *p_plaintext_mldsa44 = NULL;
     ref_plaintext_mldsa_65_data_sdk_t *p_plaintext_mldsa65 = NULL;
     ref_plaintext_mldsa_87_data_sdk_t *p_plaintext_mldsa87 = NULL;
     sgx_isv_svn_t *p_cert_pce_isv_svn = NULL;
@@ -1323,6 +1348,12 @@ tee_att_error_t tee_att_config_t::certify_key(uint8_t *p_ecdsa_blob,
         p_cert_cpu_svn = &p_plaintext_ecdsa->cert_cpu_svn;
         p_qe_report = &p_plaintext_ecdsa->qe_report;
         p_qe_report_cert_key_sig = &p_plaintext_ecdsa->qe_report_cert_key_sig;
+    } else if (plaintext_data_size == sizeof(ref_plaintext_mldsa_44_data_sdk_t)) {
+        p_plaintext_mldsa44 = reinterpret_cast<ref_plaintext_mldsa_44_data_sdk_t *>(p_plaintext_data);
+        p_cert_pce_isv_svn = &p_plaintext_mldsa44->cert_pce_info.pce_isv_svn;
+        p_cert_cpu_svn = &p_plaintext_mldsa44->cert_cpu_svn;
+        p_qe_report = &p_plaintext_mldsa44->qe_report;
+        p_qe_report_cert_key_sig = &p_plaintext_mldsa44->qe_report_cert_key_sig;
     } else if (plaintext_data_size == sizeof(ref_plaintext_mldsa_65_data_sdk_t)) {
         p_plaintext_mldsa65 = reinterpret_cast<ref_plaintext_mldsa_65_data_sdk_t *>(p_plaintext_data);
         p_cert_pce_isv_svn = &p_plaintext_mldsa65->cert_pce_info.pce_isv_svn;
@@ -1450,6 +1481,7 @@ tee_att_error_t tee_att_config_t::legacy_init_quote(sgx_ql_cert_key_type_t certi
     {
     case SGX_QL_ALG_ECDSA_P256:
         return ecdsa_init_quote(certification_key_type, p_qe_target_info, refresh_att_key, p_pub_key_id);
+    case SGX_QL_ALG_MLDSA_44:
     case SGX_QL_ALG_MLDSA_87:
     case SGX_QL_ALG_MLDSA_65:
         return mldsa_init_quote(certification_key_type, p_qe_target_info, refresh_att_key, p_pub_key_id);
@@ -1473,13 +1505,15 @@ tee_att_error_t tee_att_config_t::trusted_tdx_only_init_quote(sgx_ql_cert_key_ty
     sgx_report_body_t tdqe_report_body;
     sgx_report_t tdqe_report;
     sgx_target_info_t local_target_info;
+    ref_plaintext_mldsa_44_data_sdk_t plaintext_data_mldsa44;
     ref_plaintext_mldsa_65_data_sdk_t plaintext_data_mldsa;
     ref_plaintext_mldsa_87_data_sdk_t plaintext_data_mldsa87;
     uint32_t blob_size_read = get_tdqe_blob_size_for_algorithm(m_att_key_algorithm_id);
     int blob_mutex_rc = 0;
     const uint32_t tdqe_blob_size = get_tdqe_blob_size_for_algorithm(m_att_key_algorithm_id);
 
-    if ((m_att_key_algorithm_id != SGX_QL_ALG_MLDSA_65) &&
+    if ((m_att_key_algorithm_id != SGX_QL_ALG_MLDSA_44) &&
+        (m_att_key_algorithm_id != SGX_QL_ALG_MLDSA_65) &&
         (m_att_key_algorithm_id != SGX_QL_ALG_MLDSA_87)) {
         SE_TRACE(SE_TRACE_ERROR, "Trusted TDX-only bootstrap is only implemented for ML-DSA.\n");
         return TEE_ATT_UNSUPPORTED_ATT_KEY_ID;
@@ -1703,6 +1737,32 @@ tee_att_error_t tee_att_config_t::trusted_tdx_only_init_quote(sgx_ql_cert_key_ty
                                          0,
                                          m_ecdsa_blob,
                                          tdqe_blob_size);
+        } else if (m_att_key_algorithm_id == SGX_QL_ALG_MLDSA_44) {
+            refqt_ret = populate_mldsa_plaintext(&plaintext_data_mldsa44,
+                                                 &tdqe_report.body.cpu_svn,
+                                                 m_raw_pce_isvsvn,
+                                                 m_pce_info.pce_id,
+                                                 &tdqe_report.body.cpu_svn,
+                                                 m_raw_pce_isvsvn,
+                                                 m_pce_info.pce_id,
+                                                 &tdqe_report,
+                                                 m_qe_id,
+                                                 PCE_NIST_P256_ECDSA_SHA256,
+                                                 &local_target_info,
+                                                 certification_key_type);
+            if (TEE_ATT_SUCCESS != refqt_ret) {
+                goto CLEANUP;
+            }
+
+            sgx_status = store_cert_data(m_eid,
+                                         (uint32_t*)&tdqe_error,
+                                         reinterpret_cast<uint8_t*>(&plaintext_data_mldsa44),
+                                         sizeof(plaintext_data_mldsa44),
+                                         certification_key_type,
+                                         NULL,
+                                         0,
+                                         m_ecdsa_blob,
+                                         tdqe_blob_size);
         } else {
             refqt_ret = populate_mldsa_plaintext(&plaintext_data_mldsa,
                                                  &tdqe_report.body.cpu_svn,
@@ -1914,6 +1974,7 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
     uint32_t cert_data_size;
     tdqe_blob_plaintext_view_t blob_view;
     ref_plaintext_ecdsa_data_sdk_t plaintext_data;
+    ref_plaintext_mldsa_44_data_sdk_t plaintext_data_mldsa44;
     ref_plaintext_mldsa_65_data_sdk_t plaintext_data_mldsa;
     ref_plaintext_mldsa_87_data_sdk_t plaintext_data_mldsa87;
     uint8_t encrypted_ppid[REF_RSA_OAEP_3072_MOD_SIZE];
@@ -2251,6 +2312,30 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
                                             NULL,
                                             0,
                                             certification_key_type);
+                } else if (m_att_key_algorithm_id == SGX_QL_ALG_MLDSA_44) {
+                    const uint16_t effective_blob_pce_id =
+                        get_effective_mldsa_blob_pce_id(blob_view, m_pce_info.pce_id);
+                    refqt_ret = populate_mldsa_plaintext(&plaintext_data_mldsa44,
+                                                         &pce_cert_psvn.cpu_svn,
+                                                         pce_cert_psvn.isv_svn,
+                                                         effective_blob_pce_id,
+                                                         &tdqe_report_body.cpu_svn,
+                                                         pce_isv_svn,
+                                                         effective_blob_pce_id,
+                                                         blob_view.qe_report,
+                                                         m_qe_id,
+                                                         *blob_view.signature_scheme,
+                                                         &pce_target_info,
+                                                         certification_key_type);
+                    if (TEE_ATT_SUCCESS != refqt_ret) {
+                        goto CLEANUP;
+                    }
+                    refqt_ret = certify_key(m_ecdsa_blob,
+                                            reinterpret_cast<uint8_t*>(&plaintext_data_mldsa44),
+                                            sizeof(plaintext_data_mldsa44),
+                                            NULL,
+                                            0,
+                                            certification_key_type);
                 } else {
                     const uint16_t effective_blob_pce_id =
                         get_effective_mldsa_blob_pce_id(blob_view, m_pce_info.pce_id);
@@ -2348,6 +2433,30 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
                     refqt_ret = certify_key(m_ecdsa_blob,
                                             reinterpret_cast<uint8_t*>(&plaintext_data_mldsa87),
                                             sizeof(plaintext_data_mldsa87),
+                                            NULL,
+                                            0,
+                                            certification_key_type);
+                } else if (m_att_key_algorithm_id == SGX_QL_ALG_MLDSA_44) {
+                    const uint16_t effective_blob_pce_id =
+                        get_effective_mldsa_blob_pce_id(blob_view, m_pce_info.pce_id);
+                    refqt_ret = populate_mldsa_plaintext(&plaintext_data_mldsa44,
+                                                         &pce_cert_psvn.cpu_svn,
+                                                         pce_cert_psvn.isv_svn,
+                                                         effective_blob_pce_id,
+                                                         &tdqe_report_body.cpu_svn,
+                                                         pce_isv_svn,
+                                                         effective_blob_pce_id,
+                                                         blob_view.qe_report,
+                                                         m_qe_id,
+                                                         *blob_view.signature_scheme,
+                                                         &pce_target_info,
+                                                         certification_key_type);
+                    if (TEE_ATT_SUCCESS != refqt_ret) {
+                        goto CLEANUP;
+                    }
+                    refqt_ret = certify_key(m_ecdsa_blob,
+                                            reinterpret_cast<uint8_t*>(&plaintext_data_mldsa44),
+                                            sizeof(plaintext_data_mldsa44),
                                             NULL,
                                             0,
                                             certification_key_type);
@@ -2477,6 +2586,7 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
         }
         cert_data_size = 0;
         memset(&plaintext_data, 0, sizeof(plaintext_data));
+        memset(&plaintext_data_mldsa44, 0, sizeof(plaintext_data_mldsa44));
         memset(&plaintext_data_mldsa, 0, sizeof(plaintext_data_mldsa));
         memset(&plaintext_data_mldsa87, 0, sizeof(plaintext_data_mldsa87));
         pck_cert_id.p_qe3_id = (uint8_t*)m_qe_id;
@@ -2575,6 +2685,28 @@ tee_att_error_t tee_att_config_t::ecdsa_init_quote(sgx_ql_cert_key_type_t certif
                                     encrypted_ppid,
                                     REF_RSA_OAEP_3072_MOD_SIZE,
                                     certification_key_type);
+        } else if (m_att_key_algorithm_id == SGX_QL_ALG_MLDSA_44) {
+            refqt_ret = populate_mldsa_plaintext(&plaintext_data_mldsa44,
+                                                 &pce_cert_psvn.cpu_svn,
+                                                 pce_cert_psvn.isv_svn,
+                                                 m_pce_info.pce_id,
+                                                 &tdqe_report.body.cpu_svn,
+                                                 m_pce_info.pce_isv_svn,
+                                                 m_pce_info.pce_id,
+                                                 &tdqe_report,
+                                                 m_qe_id,
+                                                 PCE_NIST_P256_ECDSA_SHA256,
+                                                 &pce_target_info,
+                                                 certification_key_type);
+            if (TEE_ATT_SUCCESS != refqt_ret) {
+                goto CLEANUP;
+            }
+            refqt_ret = certify_key(m_ecdsa_blob,
+                                    reinterpret_cast<uint8_t*>(&plaintext_data_mldsa44),
+                                    sizeof(plaintext_data_mldsa44),
+                                    encrypted_ppid,
+                                    REF_RSA_OAEP_3072_MOD_SIZE,
+                                    certification_key_type);
         } else {
             refqt_ret = populate_mldsa_plaintext(&plaintext_data_mldsa,
                                                  &pce_cert_psvn.cpu_svn,
@@ -2668,6 +2800,7 @@ tee_att_error_t tee_att_config_t::get_quote_size(sgx_ql_cert_key_type_t certific
     {
     case SGX_QL_ALG_ECDSA_P256:
         return ecdsa_get_quote_size(certification_key_type, p_quote_size);
+    case SGX_QL_ALG_MLDSA_44:
     case SGX_QL_ALG_MLDSA_87:
     case SGX_QL_ALG_MLDSA_65:
         return mldsa_get_quote_size(certification_key_type, p_quote_size);
@@ -3129,6 +3262,7 @@ tee_att_error_t tee_att_config_t::get_quote(const sgx_report2_t *p_app_report,
     {
     case SGX_QL_ALG_ECDSA_P256:
         return ecdsa_get_quote(p_app_report, p_quote, quote_size);
+    case SGX_QL_ALG_MLDSA_44:
     case SGX_QL_ALG_MLDSA_87:
     case SGX_QL_ALG_MLDSA_65:
         return mldsa_get_quote(p_app_report, p_quote, quote_size);

@@ -38,7 +38,7 @@ EXTERNAL_LIB = $(EXTERNAL_LIB_NO_CRYPTO) -lsgx_tcxx -l$(TCRYPTO_LIB_NAME)
 vpath %.cpp .. .
 CPP_SRC := quoting_enclave_tdqe.cpp
 C_SRC := tdqe_mldsa_adapter.c
-C_OBJ_EXTRA := mldsa_native_65.o mldsa_native_87.o
+C_OBJ_EXTRA := mldsa_native_44.o mldsa_native_65.o mldsa_native_87.o
 
 OBJ := $(CPP_SRC:.cpp=.o) $(C_SRC:.c=.o) $(C_OBJ_EXTRA)
 OBJS := $(sort $(OBJ) version.o)
@@ -62,6 +62,9 @@ quoting_enclave_tdqe.o: $(AENAME)_t.c
 
 tdqe_mldsa_adapter.o: ../tdqe_mldsa_adapter.c
 	$(CC) $(CFLAGS) $(INCLUDE) $(DEFINES) -c $< -o $@
+
+mldsa_native_44.o: $(TOP_DIR)/../ae/pq/mldsa_native_44.c
+	$(CC) $(CFLAGS) $(INCLUDE) $(DEFINES) -U__CET__ -c $< -o $@
 
 mldsa_native_65.o: $(TOP_DIR)/../ae/pq/mldsa_native_65.c
 	$(CC) $(CFLAGS) $(INCLUDE) $(DEFINES) -U__CET__ -c $< -o $@

@@ -130,7 +130,8 @@ static bool is_mldsa_quote_v4(const uint8_t *p_quote, uint32_t quote_size)
 
     const auto *quote = reinterpret_cast<const sgx_quote4_t *>(p_quote);
     return quote->header.version == 4 &&
-           (quote->header.att_key_type == SGX_QL_ALG_MLDSA_65 ||
+           (quote->header.att_key_type == SGX_QL_ALG_MLDSA_44 ||
+            quote->header.att_key_type == SGX_QL_ALG_MLDSA_65 ||
             quote->header.att_key_type == SGX_QL_ALG_MLDSA_87);
 }
 
@@ -152,9 +153,10 @@ static quote3_error_t extract_chain_from_mldsa_quote_v4_raw(const uint8_t *p_quo
         return SGX_QL_QUOTE_FORMAT_UNSUPPORTED;
     }
 
+    const bool is_mldsa_44 = quote->header.att_key_type == SGX_QL_ALG_MLDSA_44;
     const bool is_mldsa_65 = quote->header.att_key_type == SGX_QL_ALG_MLDSA_65;
     const bool is_mldsa_87 = quote->header.att_key_type == SGX_QL_ALG_MLDSA_87;
-    if (!is_mldsa_65 && !is_mldsa_87) {
+    if (!is_mldsa_44 && !is_mldsa_65 && !is_mldsa_87) {
         return SGX_QL_QUOTE_FORMAT_UNSUPPORTED;
     }
 
@@ -169,6 +171,12 @@ static quote3_error_t extract_chain_from_mldsa_quote_v4_raw(const uint8_t *p_quo
             return SGX_QL_QUOTE_FORMAT_UNSUPPORTED;
         }
         const auto *sig_data = reinterpret_cast<const sgx_mldsa_87_sig_data_v4_t *>(quote->signature_data);
+        outer_cert_bytes = sig_data->certification_data;
+    } else if (is_mldsa_44) {
+        if (sig_data_len < sizeof(sgx_mldsa_44_sig_data_v4_t) + sizeof(sgx_ql_certification_data_t)) {
+            return SGX_QL_QUOTE_FORMAT_UNSUPPORTED;
+        }
+        const auto *sig_data = reinterpret_cast<const sgx_mldsa_44_sig_data_v4_t *>(quote->signature_data);
         outer_cert_bytes = sig_data->certification_data;
     } else {
         if (sig_data_len < sizeof(sgx_mldsa_65_sig_data_v4_t) + sizeof(sgx_ql_certification_data_t)) {

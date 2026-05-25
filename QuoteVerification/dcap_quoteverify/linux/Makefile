@@ -63,6 +63,7 @@ QVL_VERIFY_CPP_SRCS := $(wildcard ../*.cpp) $(wildcard *.cpp)
 QVL_VERIFY_C_SRCS := $(COMMON_DIR)/src/se_trace.c $(COMMON_DIR)/src/se_thread.c
 QVL_VERIFY_C_SRCS += qve_u.c
 QVL_VERIFY_C_SRCS += $(DCAP_AE_DIR)/tdqe/tdqe_mldsa_adapter.c
+QVL_VERIFY_C_SRCS += $(DCAP_AE_DIR)/pq/mldsa_native_44.c
 QVL_VERIFY_C_SRCS += $(DCAP_AE_DIR)/pq/mldsa_native_65.c
 QVL_VERIFY_C_SRCS += $(DCAP_AE_DIR)/pq/mldsa_native_87.c
 
